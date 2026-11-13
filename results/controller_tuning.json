@@ -1,0 +1,116 @@
+{
+  "held_out_test": {
+    "Classical: computed-torque PD": {
+      "gains_kp_kd_ki": [
+        0.32142857142857145,
+        1.1338934190276817,
+        0.0
+      ],
+      "robust_cost": 23.89854356563491,
+      "mean_iae": 14.564887300579166,
+      "worst_iae": 46.168824108539035,
+      "unstable_frac": 0.07499999999999996,
+      "mean_overshoot_pct": 41.68035070697118,
+      "median_settle_s": Infinity,
+      "settled_frac": 0.02,
+      "mean_final_err": 1.134646520748044,
+      "mean_control_tv": 387.859302196804
+    },
+    "BO: partitioned + integral": {
+      "gains_kp_kd_ki": [
+        6.569552520969768,
+        2.472491213190933,
+        0.4566631583878078
+      ],
+      "robust_cost": 4.368790989206638,
+      "mean_iae": 1.1263096980693716,
+      "worst_iae": 1.9459668356154718,
+      "unstable_frac": 0.0,
+      "mean_overshoot_pct": 19.8231642910223,
+      "median_settle_s": 7.094,
+      "settled_frac": 0.63,
+      "mean_final_err": 0.018122693526547214,
+      "mean_control_tv": 1017.5075379966593
+    },
+    "BO: model-free PID": {
+      "gains_kp_kd_ki": [
+        12.28523807443993,
+        8.701660208384913,
+        5.591254560501011
+      ],
+      "robust_cost": 3.132199712308492,
+      "mean_iae": 1.8185296902763748,
+      "worst_iae": 2.3903969381864654,
+      "unstable_frac": 0.0,
+      "mean_overshoot_pct": 3.0291428088286443,
+      "median_settle_s": Infinity,
+      "settled_frac": 0.5,
+      "mean_final_err": 0.004720628554960904,
+      "mean_control_tv": 512.2652888066317
+    }
+  },
+  "nominal_plant": {
+    "Classical: computed-torque PD": {
+      "gains_kp_kd_ki": [
+        0.32142857142857145,
+        1.1338934190276817,
+        0.0
+      ],
+      "robust_cost": 3.541448671920968,
+      "mean_iae": 3.525382927311234,
+      "worst_iae": 3.525382927311234,
+      "unstable_frac": 0.0,
+      "mean_overshoot_pct": 0.0,
+      "median_settle_s": Infinity,
+      "settled_frac": 0.0,
+      "mean_final_err": 0.00019537699309421196,
+      "mean_control_tv": 8.032872304867022
+    },
+    "BO: partitioned + integral": {
+      "gains_kp_kd_ki": [
+        6.569552520969768,
+        2.472491213190933,
+        0.4566631583878078
+      ],
+      "robust_cost": 1.944716878332943,
+      "mean_iae": 0.8437389959825499,
+      "worst_iae": 0.8437389959825499,
+      "unstable_frac": 0.0,
+      "mean_overshoot_pct": 19.887525583387156,
+      "median_settle_s": 2.922,
+      "settled_frac": 1.0,
+      "mean_final_err": 0.00407279602034062,
+      "mean_control_tv": 53.30080159051758
+    },
+    "BO: model-free PID": {
+      "gains_kp_kd_ki": [
+        12.28523807443993,
+        8.701660208384913,
+        5.591254560501011
+      ],
+      "robust_cost": 1.638546158413348,
+      "mean_iae": 1.603940718764869,
+      "worst_iae": 1.603940718764869,
+      "unstable_frac": 0.0,
+      "mean_overshoot_pct": 0.0,
+      "median_settle_s": 9.78,
+      "settled_frac": 1.0,
+      "mean_final_err": 0.001266741851662794,
+      "mean_control_tv": 17.302719824239524
+    }
+  },
+  "optimiser_comparison": {
+    "partitioned": {
+      "budget": 40,
+      "bo_final_mean": 4.538529713955797,
+      "rs_final_mean": 5.240696515488541,
+      "bo_evals_to_match_random": 18
+    },
+    "pid": {
+      "budget": 40,
+      "bo_final_mean": 3.247438254402256,
+      "rs_final_mean": 4.821692022709054,
+      "bo_evals_to_match_random": 15
+    }
+  }
+}
