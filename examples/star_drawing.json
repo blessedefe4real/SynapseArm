@@ -1,0 +1,22 @@
+{
+  "strokes": 1,
+  "points_raw": 15,
+  "points_simplified": 15,
+  "draw_length_mm": 291.41513196792994,
+  "pen_up_travel_naive_mm": 79.31996884040326,
+  "pen_up_travel_greedy_mm": 79.31996884040326,
+  "pen_up_travel_optimised_mm": 79.31996884040326,
+  "reachability": {
+    "points": 17,
+    "unreachable": 0,
+    "min_manipulability_vs_workspace_median": 0.13260064305592212,
+    "max_joint_step_deg": 1.61062903721592,
+    "neural_ik_seeds_used": 1
+  },
+  "rapid": {
+    "MoveL": 16,
+    "MoveJ": 3,
+    "draw_procedures": 1,
+    "lines": 43
+  }
+}
