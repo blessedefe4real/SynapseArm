@@ -1,0 +1,26 @@
+{
+  "Neural net only": {
+    "success_rate": 0.0,
+    "median_pos_err_mm": 60.87614482327757,
+    "mean_iters": 0.0,
+    "ms_per_solve": 0.007004859999995006
+  },
+  "DLS from home pose": {
+    "success_rate": 0.38,
+    "median_pos_err_mm": 0.00817428295151999,
+    "mean_iters": 66.28,
+    "ms_per_solve": 13.611295900000044
+  },
+  "DLS from random seed": {
+    "success_rate": 0.22,
+    "median_pos_err_mm": 516.6283231897335,
+    "mean_iters": 80.505,
+    "ms_per_solve": 16.416259679999996
+  },
+  "Neural net + DLS (hybrid)": {
+    "success_rate": 0.995,
+    "median_pos_err_mm": 1.196076996903272e-06,
+    "mean_iters": 4.56,
+    "ms_per_solve": 1.314233650000034
+  }
+}
