@@ -45,7 +45,7 @@ class Job:
 
 
 def build(request: str | None = None, image=None, image_mode="lines", width_mm=120.0, tol_mm=0.1,
-          cell: Workcell | None = None, check=True, name="SynapseDraw") -> Job:
+          cell: Workcell | None = None, check=True, name="SynapseDraw", auto_place=False) -> Job:
     if image is not None:
         raw = sources.image_strokes(image, width_mm=width_mm, mode=image_mode)
         desc = f"image: {image}" if isinstance(image, str) else "image"
@@ -72,10 +72,20 @@ def build(request: str | None = None, image=None, image_mode="lines", width_mm=1
         "pen_up_travel_optimised_mm": optimize.pen_up_travel(ordered),
     }
     cell = cell or Workcell()
+    if auto_place:
+        from ml.dexterity import DexterityMap, optimise_placement
+        res = optimise_placement(ordered, DexterityMap.load(), verbose=False)
+        if res["cell"] is not None:
+            cell = res["cell"]
+            stats["placement"] = {"paper_origin_mm": [round(v, 1) for v in cell.paper_origin_mm],
+                                  "yaw_deg": round(cell.yaw_deg, 1),
+                                  "candidates_scored": res["n_candidates"],
+                                  "surrogate_seconds": round(res["surrogate_seconds"], 2)}
     if check:
         rep = check_reach(ordered, cell)
         stats["reachability"] = rep.as_dict()
     code = to_rapid(ordered, name=name, pen_length_mm=cell.pen_length_mm, paper_origin_mm=cell.paper_origin_mm,
+                    yaw_deg=cell.yaw_deg,
                     comment=desc)
     stats["rapid"] = rapid_stats(code)
     return Job(ordered, raw, code, stats)

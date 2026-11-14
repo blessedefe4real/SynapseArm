@@ -24,11 +24,17 @@ class Workcell:
     paper_origin_mm: tuple = (700.0, -150.0, 250.0)   # paper bottom-left in robot base frame
     pen_length_mm: float = 120.0
     robot: DHRobot = field(default_factory=DHRobot)
+    yaw_deg: float = 0.0                              # paper rotation about the base z-axis
+
+    @property
+    def R_paper(self) -> np.ndarray:
+        c, s = np.cos(np.radians(self.yaw_deg)), np.sin(np.radians(self.yaw_deg))
+        return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1.0]])
 
     def flange_pose(self, xy, z_up=0.0) -> np.ndarray:
         T = np.eye(4)
-        T[:3, :3] = R_DOWN
-        tip = np.asarray(self.paper_origin_mm) + np.array([xy[0], xy[1], z_up])
+        T[:3, :3] = self.R_paper @ R_DOWN
+        tip = np.asarray(self.paper_origin_mm) + self.R_paper @ np.array([xy[0], xy[1], z_up])
         T[:3, 3] = tip - R_DOWN @ np.array([0, 0, self.pen_length_mm])
         return T
 
@@ -38,6 +44,7 @@ class ReachReport:
     n_points: int
     n_unreachable: int
     min_manipulability: float          # relative to the median over the robot's workspace (1.0 = typical)
+    min_dexterity: float               # inverse condition number of the scaled Jacobian, 0..1
     max_joint_step_deg: float
     q_path: np.ndarray
     neural_seeded: int
@@ -49,6 +56,7 @@ class ReachReport:
     def as_dict(self):
         return {"points": self.n_points, "unreachable": self.n_unreachable,
                 "min_manipulability_vs_workspace_median": self.min_manipulability,
+                "min_dexterity": self.min_dexterity,
                 "max_joint_step_deg": self.max_joint_step_deg, "neural_ik_seeds_used": self.neural_seeded}
 
 
@@ -95,5 +103,6 @@ def check_reach(strokes, cell: Workcell | None = None, z_up=15.0, nik=None) -> R
     Q = np.array(Q)
     manip = min(robot.manipulability(q) for q in Q[:: max(len(Q) // 200, 1)]) if len(Q) else 0.0
     manip /= _workspace_median_manipulability(robot)
+    dex = min(robot.dexterity(q) for q in Q[:: max(len(Q) // 200, 1)]) if len(Q) else 0.0
     step = float(np.degrees(np.abs(np.diff(Q, axis=0)).max())) if len(Q) > 1 else 0.0
-    return ReachReport(len(targets), bad, float(manip), step, Q, seeded)
+    return ReachReport(len(targets), bad, float(manip), float(dex), step, Q, seeded)

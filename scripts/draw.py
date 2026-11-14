@@ -100,12 +100,15 @@ if __name__ == "__main__":
     p.add_argument("--width", type=float, default=120.0, help="drawing width for images (mm)")
     p.add_argument("--tol", type=float, default=0.1, help="simplification tolerance (mm)")
     p.add_argument("--out", default="results/drawing")
+    p.add_argument("--auto-place", action="store_true",
+                   help="choose paper position/rotation for maximum dexterity (learned map + IK check)")
     p.add_argument("--demo", action="store_true")
     a = p.parse_args()
     if a.demo:
         demo()
     else:
-        job = build(a.request, image=a.image, image_mode=a.mode, width_mm=a.width, tol_mm=a.tol)
+        job = build(a.request, image=a.image, image_mode=a.mode, width_mm=a.width, tol_mm=a.tol,
+                    auto_place=a.auto_place)
         save(job, ROOT / a.out)
         print(json.dumps(job.stats, indent=1))
         print(f"\nRAPID module -> {a.out}.mod")

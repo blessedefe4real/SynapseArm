@@ -97,6 +97,17 @@ class DHRobot:
         J = self.jacobian(q)
         return float(np.sqrt(max(np.linalg.det(J @ J.T), 0.0)))
 
+    def dexterity(self, q, length_scale_mm: float = 760.0) -> float:
+        """Inverse condition number of the length-scaled Jacobian, in [0, 1].
+
+        Unit-consistent (translation rows divided by a characteristic length), so unlike
+        manipulability it doesn't simply reward being far from the base. 1 = isotropic, 0 = singular.
+        """
+        J = self.jacobian(q).copy()
+        J[:3] /= length_scale_mm
+        sv = np.linalg.svd(J, compute_uv=False)
+        return float(sv[-1] / sv[0])
+
     # ------------------------------------------------------------------ IK
     @staticmethod
     def pose_error(T_current: np.ndarray, T_target: np.ndarray) -> np.ndarray:
