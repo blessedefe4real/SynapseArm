@@ -1,8 +1,9 @@
 """End-to-end: request -> strokes -> simplify -> order -> reachability -> RAPID.
 
-Requests can be plain commands, parsed by a small grammar:
-    "draw a 60 mm star"            "draw a hexagon 80mm"
-    "write 'Hello robot' 25 mm"    "write SynapseArm"
+Requests are free text. With an Anthropic API key, Claude plans the layout (pathgen.llm);
+otherwise a small grammar handles one or more clauses:
+    "draw a 60 mm star"            "write 'Hello robot' 25 mm and a small star"
+    "draw a hexagon 8 cm, then a circle"
 or an image path (sketch or photo).
 """
 from __future__ import annotations
@@ -45,24 +46,23 @@ class Job:
 
 
 def build(request: str | None = None, image=None, image_mode="lines", width_mm=120.0, tol_mm=0.1,
-          cell: Workcell | None = None, check=True, name="SynapseDraw", auto_place=False) -> Job:
+          cell: Workcell | None = None, check=True, name="SynapseDraw", auto_place=False,
+          use_llm: bool | None = None) -> Job:
+    plan, planner = None, "image"
     if image is not None:
         raw = sources.image_strokes(image, width_mm=width_mm, mode=image_mode)
         desc = f"image: {image}" if isinstance(image, str) else "image"
     else:
-        cmd = parse_command(request)
-        if cmd["kind"] == "text":
-            raw = sources.text_strokes(cmd["text"], cmd["height_mm"])
-        else:
-            kw = {}
-            if cmd["n"]:
-                kw = {"points": cmd["n"]} if cmd["shape"] == "star" else {"sides": cmd["n"]}
-            raw = sources.shape_strokes(cmd["shape"], cmd["size_mm"], **kw)
+        from pathgen.llm import plan_request, plan_to_strokes
+        plan, planner = plan_request(request, use_llm=use_llm)
+        raw = plan_to_strokes(plan)
         desc = f"request: {request}"
     raw = sources.normalise(raw, margin_mm=10.0)   # keep the drawing 10 mm in from the paper corner
     simp = optimize.simplify(raw, tol_mm)
     ordered = optimize.order_strokes(simp)
     stats = {
+        "planner": planner,
+        **({"plan": plan} if plan else {}),
         "strokes": len(raw),
         "points_raw": int(sum(len(s) for s in raw)),
         "points_simplified": int(sum(len(s) for s in ordered)),

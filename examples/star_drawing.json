@@ -1,4 +1,13 @@
 {
+  "planner": "rules",
+  "plan": [
+    {
+      "kind": "shape",
+      "shape": "star",
+      "size_mm": 60.0,
+      "n": 7
+    }
+  ],
   "strokes": 1,
   "points_raw": 15,
   "points_simplified": 15,
@@ -10,6 +19,7 @@
     "points": 17,
     "unreachable": 0,
     "min_manipulability_vs_workspace_median": 0.13260064305592212,
+    "min_dexterity": 0.017793185281589807,
     "max_joint_step_deg": 1.61062903721592,
     "neural_ik_seeds_used": 1
   },

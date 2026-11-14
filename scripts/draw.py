@@ -2,6 +2,7 @@
 
     python scripts/draw.py "draw a 60 mm star"
     python scripts/draw.py "write 'Hello robot' 25 mm"
+    python scripts/draw.py "sign 'Ada' about 3 cm tall with a small star to the right" --llm
     python scripts/draw.py --image examples/sketch.png --width 160
     python scripts/draw.py --demo          # regenerates results/pathgen_demo.png + examples/*.mod
 
@@ -102,13 +103,16 @@ if __name__ == "__main__":
     p.add_argument("--out", default="results/drawing")
     p.add_argument("--auto-place", action="store_true",
                    help="choose paper position/rotation for maximum dexterity (learned map + IK check)")
+    p.add_argument("--llm", dest="use_llm", action="store_true", default=None,
+                   help="plan with Claude (default: when ANTHROPIC_API_KEY is set)")
+    p.add_argument("--no-llm", dest="use_llm", action="store_false", help="rule-based parser only")
     p.add_argument("--demo", action="store_true")
     a = p.parse_args()
     if a.demo:
         demo()
     else:
         job = build(a.request, image=a.image, image_mode=a.mode, width_mm=a.width, tol_mm=a.tol,
-                    auto_place=a.auto_place)
+                    auto_place=a.auto_place, use_llm=a.use_llm)
         save(job, ROOT / a.out)
         print(json.dumps(job.stats, indent=1))
         print(f"\nRAPID module -> {a.out}.mod")

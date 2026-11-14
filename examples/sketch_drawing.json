@@ -1,4 +1,5 @@
 {
+  "planner": "image",
   "strokes": 39,
   "points_raw": 2693,
   "points_simplified": 793,
@@ -10,6 +11,7 @@
     "points": 871,
     "unreachable": 0,
     "min_manipulability_vs_workspace_median": 0.15231309349318975,
+    "min_dexterity": 0.020024749772452596,
     "max_joint_step_deg": 4.886635815826655,
     "neural_ik_seeds_used": 1
   },

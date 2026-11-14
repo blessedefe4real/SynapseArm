@@ -1,4 +1,12 @@
 {
+  "planner": "rules",
+  "plan": [
+    {
+      "kind": "text",
+      "text": "SynapseArm",
+      "height_mm": 22.0
+    }
+  ],
   "strokes": 14,
   "points_raw": 644,
   "points_simplified": 363,
@@ -10,6 +18,7 @@
     "points": 391,
     "unreachable": 0,
     "min_manipulability_vs_workspace_median": 0.1342248066693271,
+    "min_dexterity": 0.017980242635228346,
     "max_joint_step_deg": 1.5663286743352889,
     "neural_ik_seeds_used": 1
   },

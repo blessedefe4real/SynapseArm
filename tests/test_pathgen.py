@@ -103,3 +103,61 @@ def test_end_to_end_text_job():
     assert job.stats["reachability"]["unreachable"] == 0
     assert job.stats["points_simplified"] <= job.stats["points_raw"]
     assert "MoveL" in job.rapid
+
+
+# ----------------------------------------------------------------------------- natural-language planner
+from types import SimpleNamespace  # noqa: E402
+
+from pathgen.llm import PLAN_TOOL, llm_plan, plan_request, plan_to_strokes, rule_plan, validate_plan  # noqa: E402
+
+
+class FakeClaude:
+    """Stands in for anthropic.Anthropic(): records the call, returns a canned tool_use block."""
+
+    def __init__(self, items):
+        self.items, self.calls = items, []
+        self.messages = self
+
+    def create(self, **kw):
+        self.calls.append(kw)
+        return SimpleNamespace(content=[SimpleNamespace(type="tool_use", name="drawing_plan",
+                                                        input={"items": self.items})])
+
+
+def test_llm_plan_uses_forced_tool_and_validates_output():
+    fake = FakeClaude([{"kind": "text", "text": "Ada", "height_mm": 30},
+                       {"kind": "shape", "shape": "star", "size_mm": 9999, "x_mm": 80, "n": 5},
+                       {"kind": "shape", "shape": "dragon"},          # unsupported -> dropped
+                       {"kind": "text", "text": "   "}])               # empty -> dropped
+    plan = llm_plan("sign Ada with a star", client=fake)
+    call = fake.calls[0]
+    assert call["tool_choice"] == {"type": "tool", "name": "drawing_plan"}
+    assert call["tools"] == [PLAN_TOOL]
+    assert [i["kind"] for i in plan] == ["text", "shape"]
+    assert plan[1]["size_mm"] == 400.0                                  # clamped
+
+
+def test_plan_request_prefers_injected_client_and_falls_back_without_key(monkeypatch):
+    plan, who = plan_request("anything", client=FakeClaude([{"kind": "shape", "shape": "circle"}]))
+    assert who == "llm" and plan[0]["shape"] == "circle"
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    plan, who = plan_request("draw a 40 mm hexagon")
+    assert who == "rules" and plan[0]["shape"] == "hexagon"
+
+
+def test_rule_plan_multiple_items_and_quotes():
+    plan = rule_plan("a 60 mm star and the word 'rock and roll' 20 mm")
+    assert [i["kind"] for i in plan] == ["shape", "text"]
+    assert plan[1]["text"] == "rock and roll"
+
+
+def test_validate_plan_rejects_empty():
+    with pytest.raises(ValueError):
+        validate_plan([{"kind": "shape", "shape": "unicorn"}])
+
+
+def test_layout_places_items_in_a_row_without_overlap():
+    strokes = plan_to_strokes([{"kind": "shape", "shape": "circle", "size_mm": 40},
+                               {"kind": "shape", "shape": "square", "size_mm": 30}], gap_mm=10)
+    xs = [s[:, 0] for s in strokes]
+    assert xs[0].max() == pytest.approx(40) and xs[1].min() == pytest.approx(50)

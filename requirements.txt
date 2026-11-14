@@ -6,3 +6,5 @@ joblib>=1.4
 opencv-python-headless>=4.10
 scikit-image>=0.24
 pytest>=8
+# optional: natural-language planning with Claude (pathgen/llm.py)
+# anthropic>=0.40
