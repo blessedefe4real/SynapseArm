@@ -43,13 +43,18 @@ def test_debounce_requires_consecutive_samples():
 
 
 def test_fleet_tracks_and_faults_show_in_observer(fleet):
+    """Each faulty arm vs its fault-free twin (same unit, trajectory and noise): the observer
+    residuals agree until the fault starts, then separate."""
     assert np.abs(fleet.q - fleet.q_des).max() < 0.06            # rad, without friction compensation
-    R = momentum_observer(fleet, dyn)
+    twin = simulate_fleet(4, ["none"] * 4, seed=7, units=fleet.units)
+    assert np.allclose(twin.q_des, fleet.q_des)
+    R, Rt = momentum_observer(fleet, dyn), momentum_observer(twin, dyn)
     for n in (1, 2, 3):
         i = int(fleet.onset[n] / DT)
-        pre = np.abs(R[100:i, n]).max(0)
-        post = np.abs(R[i:, n]).max(0)
-        assert (post - pre).max() > 5.0                          # N m jump on some joint
+        assert np.abs(R[:i - 1, n] - Rt[:i - 1, n]).max() < 1e-6
+        # collisions and payload change load the big joints; a weakened motor on a lightly loaded
+        # joint changes the torque balance only a little (why actuator faults are hardest)
+        assert np.abs(R[i:, n] - Rt[i:, n]).max() > (2.0 if fleet.fault[n] != "actuator" else 0.05)
 
 
 def test_observer_and_naive_see_the_same_friction_with_opposite_sign(fleet):
@@ -59,3 +64,25 @@ def test_observer_and_naive_see_the_same_friction_with_opposite_sign(fleet):
     R, Nv = momentum_observer(fleet, dyn)[200:, 0], naive_residual(fleet, dyn)[200:, 0]
     for j in range(3):
         assert np.corrcoef(R[:, j], Nv[:, j])[0, 1] < -0.8
+
+
+def test_unit_calibration_recovers_known_coefficients(fleet):
+    from ml.fault_detection import UnitCalibration
+    cal = UnitCalibration(dyn, filtered=True, ridge=1e-9)
+    B = cal.basis(fleet)                                     # (steps, N, 6, 4), already filtered
+    w_true = np.random.default_rng(0).normal(size=(fleet.q.shape[1], 6, 4))
+    resid = np.einsum("tnjk,njk->tnj", B, w_true)
+    cal.fit(fleet, resid)
+    # some weights are unidentifiable (joint 1 rotates about vertical, so payload gravity is
+    # identically zero there); what matters is that the fitted model reproduces the residual
+    assert np.abs(cal.apply(fleet, resid)).max() < 1e-3 * np.abs(resid).max()
+
+
+def test_units_rerun_same_physical_arm():
+    from ml.fault_detection import Units
+    a = simulate_fleet(2, seed=3)
+    b = simulate_fleet(2, seed=4, units=a.units)
+    assert np.allclose(a.units.visc, b.units.visc) and np.allclose(a.units.strib, b.units.strib)
+    assert not np.allclose(a.q_des, b.q_des)                 # new trajectory
+    both = Units.concat([a.units, b.units[0:1]])
+    assert both.visc.shape == (3, 6)

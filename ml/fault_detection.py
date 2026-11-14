@@ -76,6 +76,30 @@ def random_moves(n_runs, rng, robot):
 
 
 @dataclass
+class Units:
+    """Unit-to-unit physical variation of each arm in the fleet (kept so a unit can be re-run)."""
+    visc: np.ndarray         # (N, 6) viscous friction
+    coul: np.ndarray         # (N, 6) Coulomb friction
+    strib: np.ndarray        # (N, 6) Stribeck (static-friction) excess, not in any model's basis
+    payload_dm: np.ndarray   # (N,) payload deviation from nominal (kg)
+
+    @classmethod
+    def sample(cls, n, rng, dyn: ArmDynamics):
+        return cls(dyn.viscous * rng.uniform(0.7, 1.3, (n, 6)), dyn.coulomb * rng.uniform(0.7, 1.3, (n, 6)),
+                   dyn.coulomb * rng.uniform(0.0, 0.6, (n, 6)), rng.uniform(-0.5, 0.5, n))
+
+    def __getitem__(self, sl):
+        return Units(self.visc[sl], self.coul[sl], self.strib[sl], self.payload_dm[sl])
+
+    @classmethod
+    def concat(cls, parts):
+        return cls(*(np.concatenate([getattr(u, f) for u in parts]) for f in ("visc", "coul", "strib", "payload_dm")))
+
+
+V_STRIBECK = 0.1   # rad/s
+
+
+@dataclass
 class FleetRun:
     q: np.ndarray            # (steps, N, 6) measured
     qd: np.ndarray
@@ -85,19 +109,21 @@ class FleetRun:
     fault: np.ndarray        # (N,) fault label ("none" or one of FAULTS)
     onset: np.ndarray        # (N,) onset time (s), nan for none
     joint: np.ndarray        # (N,) affected joint for wear/actuator, -1 otherwise
+    units: Units | None = None
 
 
-def simulate_fleet(n_runs, faults=None, seed=0, dyn_nominal: ArmDynamics | None = None):
-    """faults: list of length n_runs with 'none' or a fault name."""
+def simulate_fleet(n_runs, faults=None, seed=0, dyn_nominal: ArmDynamics | None = None, units: Units | None = None):
+    """faults: list of length n_runs with 'none' or a fault name. Pass `units` to re-run the same
+    physical arms (e.g. a commissioning run) on new trajectories."""
     rng = np.random.default_rng(seed)
     nom = dyn_nominal or ArmDynamics()
     plant = ArmDynamics(payload_kg=nom.payload_kg)
     faults = np.array(faults if faults is not None else ["none"] * n_runs)
     N, steps = n_runs, int(T_RUN / DT)
     q_d, qd_d, qdd_d = random_moves(N, rng, nom.robot)
-    visc = plant.viscous * rng.uniform(0.7, 1.3, (N, 6))
-    coul = plant.coulomb * rng.uniform(0.7, 1.3, (N, 6))
-    payload_dm = rng.uniform(-0.5, 0.5, N)                        # normal payload variation
+    if units is None:
+        units = Units.sample(N, np.random.default_rng(seed + 10_000), plant)
+    visc, coul, strib, payload_dm = units.visc, units.coul, units.strib, units.payload_dm
     onset = np.where(faults == "none", np.nan, rng.uniform(1.5, 4.5, N))
     joint = np.where(np.isin(faults, ["wear", "actuator"]), rng.integers(0, 6, N), -1)
     f_dir = rng.normal(size=(N, 3))
@@ -137,8 +163,10 @@ def simulate_fleet(n_runs, faults=None, seed=0, dyn_nominal: ArmDynamics | None 
         v_[idx[sel], joint[sel]] *= 3.0
         c_[idx[sel], joint[sel]] *= 2.0
         vs = 0.02
-        fric = v_ * qd + c_ * np.tanh(qd / vs)
-        dfric = v_ + c_ / vs / np.cosh(qd / vs) ** 2
+        st = strib * np.exp(-(qd / V_STRIBECK) ** 2)               # Stribeck: extra friction near rest
+        th = np.tanh(qd / vs)
+        fric = v_ * qd + (c_ + st) * th
+        dfric = v_ + (c_ + st) / vs / np.cosh(qd / vs) ** 2 - 2 * qd / V_STRIBECK ** 2 * st * th
         M = plant.mass_matrix(q)
         rhs = tau_motor + tau_ext - plant.bias(q, qd, friction=False) - fric
         A = M + DT * dfric[:, :, None] * np.eye(6)
@@ -146,7 +174,7 @@ def simulate_fleet(n_runs, faults=None, seed=0, dyn_nominal: ArmDynamics | None 
         Q[i], QD[i], TAU[i] = qm, qdm, tau_meas
         qd = qd + dv
         q = q + DT * qd
-    return FleetRun(Q, QD, TAU, qdd_d, q_d, faults, onset, joint)
+    return FleetRun(Q, QD, TAU, qdd_d, q_d, faults, onset, joint, units)
 
 
 # --------------------------------------------------------------------------- residuals
@@ -216,6 +244,49 @@ class LearnedResidual:
         X = feats.reshape(-1, feats.shape[-1])
         raw = np.stack([m.predict(X) for m in self.models], -1).reshape(feats.shape[:-1] + (6,))
         return observer_filter(raw) if filtered else raw
+
+
+# --------------------------------------------------------------------------- per-unit calibration
+def payload_gravity_basis(run: FleetRun, dyn: ArmDynamics, chunk=200):
+    """Joint torque per kg of extra payload at the tool, J^T (0, 0, -g), along the run: (steps, N, 6)."""
+    steps, N, _ = run.q.shape
+    out = np.empty((steps, N, 6))
+    for i0 in range(0, steps, chunk):
+        q = run.q[i0:i0 + chunk].reshape(-1, 6)
+        J, _ = flange_point_jacobian(dyn, q)
+        out[i0:i0 + chunk] = np.einsum("nij,i->nj", J, np.array([0, 0, -G])).reshape(-1, N, 6)
+    return out
+
+
+class UnitCalibration:
+    """Identify each arm's own deviation from the fleet model from one fault-free commissioning run.
+
+    Per arm and joint, a ridge fit of the remaining residual on a standard identification basis:
+    [viscous q_dot_j, Coulomb tanh(q_dot_j / v_s), payload J^T g, offset]. Through the observer's
+    filter when the residual is an observer residual. Four numbers per joint, frozen afterwards;
+    the Stribeck part of the plant is deliberately not in the basis.
+    """
+
+    def __init__(self, dyn: ArmDynamics, filtered=True, ridge=1e-3):
+        self.dyn, self.filtered, self.ridge = dyn, filtered, ridge
+
+    def basis(self, run: FleetRun):
+        g = payload_gravity_basis(run, self.dyn)
+        B = np.stack([run.qd, np.tanh(run.qd / 0.02), g, np.ones_like(run.qd)], axis=-1)   # (steps, N, 6, 4)
+        return observer_filter(B) if self.filtered else B
+
+    def fit(self, commissioning: FleetRun, residual, warmup=100):
+        B = self.basis(commissioning)[warmup:]
+        r = residual[warmup:]
+        scale = np.sqrt((B ** 2).mean(0)) + 1e-9                                            # (N, 6, 4)
+        Bn = B / scale
+        A = np.einsum("tnjk,tnjl->njkl", Bn, Bn) + self.ridge * len(B) * np.eye(4)
+        b = np.einsum("tnjk,tnj->njk", Bn, r)
+        self.w = np.linalg.solve(A, b[..., None])[..., 0] / scale
+        return self
+
+    def apply(self, run: FleetRun, residual):
+        return residual - np.einsum("tnjk,njk->tnj", self.basis(run), self.w)
 
 
 # --------------------------------------------------------------------------- detection
