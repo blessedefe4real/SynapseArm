@@ -86,3 +86,40 @@ def test_units_rerun_same_physical_arm():
     assert not np.allclose(a.q_des, b.q_des)                 # new trajectory
     both = Units.concat([a.units, b.units[0:1]])
     assert both.visc.shape == (3, 6)
+
+
+def test_kalman_gain_is_a_proper_blend():
+    from ml.fault_detection import kalman_gain
+    K = kalman_gain(0.1)
+    assert 0 < K[1, 1] < 1 and 0 < K[0, 0] <= 1
+
+
+def test_kalman_tracks_known_motion_without_bias():
+    """Noise-free measurements of a motion that follows the planned acceleration exactly:
+    the filter must reproduce it (no lag from using the plan as input)."""
+    from dataclasses import replace
+
+    from ml.fault_detection import kalman_velocity
+    q, qd, qdd = random_moves(2, np.random.default_rng(5), dyn.robot)
+    # integrate the planned acceleration exactly as the filter's model does
+    v = np.zeros_like(qd)
+    x = np.zeros_like(q)
+    x[0], v[0] = q[0], qd[0]
+    for i in range(1, len(q)):
+        x[i] = x[i - 1] + DT * v[i - 1] + 0.5 * DT ** 2 * qdd[i - 1]
+        v[i] = v[i - 1] + DT * qdd[i - 1]
+    run = simulate_fleet(2, seed=5)
+    run = replace(run, q=x, qd=v, qdd_des=qdd)
+    k = kalman_velocity(run)
+    assert np.abs(k.qd - v).max() < 1e-9 and np.abs(k.q - x).max() < 1e-9
+
+
+def test_kalman_cuts_velocity_noise_but_keeps_collisions_visible(fleet):
+    from ml.fault_detection import kalman_velocity
+    k = kalman_velocity(fleet)
+    rmse = lambda a: np.sqrt(((a - fleet.qd_true)[100:] ** 2).mean((0, 1)))  # noqa: E731
+    assert np.all(rmse(k.qd)[:3] < 0.6 * rmse(fleet.qd)[:3])          # ~2-3x on the big joints
+    twin = kalman_velocity(simulate_fleet(4, ["none"] * 4, seed=7, units=fleet.units))
+    R, Rt = momentum_observer(k, dyn), momentum_observer(twin, dyn)
+    i = int(fleet.onset[1] / DT)                                       # run 1 is the collision
+    assert np.abs(R[i:, 1] - Rt[i:, 1]).max() > 2.0

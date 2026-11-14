@@ -110,6 +110,7 @@ class FleetRun:
     onset: np.ndarray        # (N,) onset time (s), nan for none
     joint: np.ndarray        # (N,) affected joint for wear/actuator, -1 otherwise
     units: Units | None = None
+    qd_true: np.ndarray | None = None   # ground-truth velocity (simulation only; for tuning/tests)
 
 
 def simulate_fleet(n_runs, faults=None, seed=0, dyn_nominal: ArmDynamics | None = None, units: Units | None = None):
@@ -133,7 +134,7 @@ def simulate_fleet(n_runs, faults=None, seed=0, dyn_nominal: ArmDynamics | None 
     act_gain = rng.uniform(0.6, 0.8, N)
 
     q, qd = q_d[0].copy(), np.zeros((N, 6))
-    Q, QD, TAU = (np.empty((steps, N, 6)) for _ in range(3))
+    Q, QD, TAU, QDT = (np.empty((steps, N, 6)) for _ in range(4))
     idx = np.arange(N)
     for i in range(steps):
         t = i * DT
@@ -171,10 +172,10 @@ def simulate_fleet(n_runs, faults=None, seed=0, dyn_nominal: ArmDynamics | None 
         rhs = tau_motor + tau_ext - plant.bias(q, qd, friction=False) - fric
         A = M + DT * dfric[:, :, None] * np.eye(6)
         dv = np.linalg.solve(A, (DT * rhs)[..., None])[..., 0]
-        Q[i], QD[i], TAU[i] = qm, qdm, tau_meas
+        Q[i], QD[i], TAU[i], QDT[i] = qm, qdm, tau_meas, qd
         qd = qd + dv
         q = q + DT * qd
-    return FleetRun(Q, QD, TAU, qdd_d, q_d, faults, onset, joint, units)
+    return FleetRun(Q, QD, TAU, qdd_d, q_d, faults, onset, joint, units, QDT)
 
 
 # --------------------------------------------------------------------------- residuals
@@ -244,6 +245,57 @@ class LearnedResidual:
         X = feats.reshape(-1, feats.shape[-1])
         raw = np.stack([m.predict(X) for m in self.models], -1).reshape(feats.shape[:-1] + (6,))
         return observer_filter(raw) if filtered else raw
+
+
+# --------------------------------------------------------------------------- velocity estimation
+SIGMA_Q, SIGMA_V = 1e-5, 2e-3          # encoder position / velocity noise (rad, rad/s), as simulated
+
+
+def kalman_gain(sigma_a, sigma_q=SIGMA_Q, sigma_v=SIGMA_V, iters=5000):
+    """Steady-state gain of the per-joint filter, state [q, qd], measurements [q, qd].
+
+    Process model: constant acceleration over one sample, driven by the planned acceleration
+    plus white acceleration noise sigma_a (which covers tracking error, friction, faults)."""
+    F = np.array([[1.0, DT], [0.0, 1.0]])
+    Gm = np.array([[DT ** 2 / 2], [DT]])
+    Qn = sigma_a ** 2 * Gm @ Gm.T
+    R = np.diag([sigma_q ** 2, sigma_v ** 2])
+    P = np.eye(2)
+    for _ in range(iters):
+        P = F @ P @ F.T + Qn
+        Kg = P @ np.linalg.inv(P + R)
+        P = (np.eye(2) - Kg) @ P
+    return Kg
+
+
+# per-joint process noise, tuned for lowest velocity RMSE against ground truth on a separate
+# fault-free tuning fleet (scripts/fault_detection.py never sees it): big joints 0.1, wrist 0.3
+SIGMA_A = np.array([0.1, 0.1, 0.1, 0.3, 0.3, 0.3])
+
+
+def kalman_velocity(run: FleetRun, sigma_a=SIGMA_A):
+    """Filtered copy of a run: q and qd replaced by the steady-state Kalman estimate.
+
+    The input is the *planned* acceleration (known to the controller, independent of any
+    fault), so a fault shows up through the measurements and is not explained away by the
+    prediction."""
+    from dataclasses import replace
+    sig = np.broadcast_to(np.asarray(sigma_a, float), (6,))
+    K = np.stack([kalman_gain(sa) for sa in sig])               # (6, 2, 2)
+    k00, k01, k10, k11 = K[:, 0, 0], K[:, 0, 1], K[:, 1, 0], K[:, 1, 1]
+    steps = run.q.shape[0]
+    q_hat, v_hat = run.q[0].copy(), run.qd[0].copy()
+    Qf, Vf = np.empty_like(run.q), np.empty_like(run.qd)
+    for i in range(steps):
+        if i:
+            a = run.qdd_des[i - 1]
+            q_hat = q_hat + DT * v_hat + 0.5 * DT ** 2 * a
+            v_hat = v_hat + DT * a
+        eq, ev = run.q[i] - q_hat, run.qd[i] - v_hat
+        q_hat = q_hat + k00 * eq + k01 * ev
+        v_hat = v_hat + k10 * eq + k11 * ev
+        Qf[i], Vf[i] = q_hat, v_hat
+    return replace(run, q=Qf, qd=Vf)
 
 
 # --------------------------------------------------------------------------- per-unit calibration

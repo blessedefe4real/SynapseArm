@@ -26,8 +26,8 @@ sys.path.insert(0, str(ROOT))
 warnings.filterwarnings("ignore")
 
 from ml.fault_detection import (DT, FAULTS, FleetRun, LearnedResidual, UnitCalibration, Units,  # noqa: E402
-                                debounce, detect, diagnosis_features, momentum_observer, naive_residual,
-                                residual_features, score_series, simulate_fleet)
+                                debounce, detect, diagnosis_features, kalman_velocity, momentum_observer,
+                                naive_residual, residual_features, score_series, simulate_fleet)
 from robotics.dynamics import ArmDynamics  # noqa: E402
 
 CACHE = Path("/tmp/synapsearm_fleet.joblib")
@@ -66,27 +66,46 @@ else:
     print(f"simulated {sum(len(s.fault) for s in sets.values())} runs in {time.time() - t0:.0f} s")
     joblib.dump(sets, CACHE)
 
-t0 = time.time()
-res = {name: {"naive": naive_residual(s, dyn), "observer": momentum_observer(s, dyn)} for name, s in sets.items()}
-print(f"residuals in {time.time() - t0:.0f} s")
+def residual_family(sets_v, tag):
+    """naive / observer / learned (+ per-unit calibrated) residuals for one velocity source."""
+    t0 = time.time()
+    out = {name: {"naive" + tag: naive_residual(s, dyn), "observer" + tag: momentum_observer(s, dyn)}
+           for name, s in sets_v.items()}
+    model = LearnedResidual().fit(residual_features(sets_v["train_normal"]), out["train_normal"]["observer" + tag])
+    for name, s in sets_v.items():
+        out[name]["learned" + tag] = out[name]["observer" + tag] - model.predict(residual_features(s))
+    # per-unit calibration: identified on each arm's commissioning run, then frozen
+    for name in MAIN:
+        s, c = sets_v[name], sets_v["comm_" + name]
+        for base, filt in (("learned", True), ("naive", False)):
+            cal = UnitCalibration(dyn, filtered=filt).fit(c, out["comm_" + name][base + tag])
+            out[name][base + tag + "_unit"] = cal.apply(s, out[name][base + tag])
+    # keep only what evaluation needs, in float32 (memory: two families x ~1,100 runs)
+    out = {name: {k: v.astype(np.float32) for k, v in d.items()} for name, d in out.items() if name in MAIN}
+    print(f"residuals{tag or ' (raw)'} in {time.time() - t0:.0f} s")
+    return out, model
 
-learned = LearnedResidual().fit(residual_features(sets["train_normal"]), res["train_normal"]["observer"])
+
+res, learned = residual_family(sets, "")
 joblib.dump(learned, ROOT / "models" / "fault_residual.joblib", compress=3)
-for name, s in sets.items():
-    res[name]["learned"] = res[name]["observer"] - learned.predict(residual_features(s))
-
-# per-unit calibration: identified on each arm's commissioning run, then frozen
-for name in MAIN:
-    s, c = sets[name], sets["comm_" + name]
-    for base, filt in (("learned", True), ("naive", False)):
-        cal = UnitCalibration(dyn, filtered=filt).fit(c, res["comm_" + name][base])
-        res[name][base + "_unit"] = cal.apply(s, res[name][base])
+t0 = time.time()
+sets_kf = {name: kalman_velocity(s) for name, s in sets.items()}
+print(f"Kalman filtering in {time.time() - t0:.0f} s")
+res_kf, learned_kf = residual_family(sets_kf, "_kf")
+joblib.dump(learned_kf, ROOT / "models" / "fault_residual_kf.joblib", compress=3)
+for name in res:
+    res[name].update(res_kf[name])
+del res_kf, sets_kf
 EVAL = MAIN
 
-DETECTORS = ["naive", "observer", "learned", "naive_unit", "learned_unit"]
+DETECTORS = ["naive", "observer", "learned", "naive_unit", "learned_unit",
+             "naive_kf", "observer_kf", "learned_kf", "naive_kf_unit", "learned_kf_unit"]
 NAMES = {"naive": "Inverse-dynamics residual", "observer": "Momentum observer (rigid-body model)",
          "learned": "Observer + learned fleet model", "naive_unit": "ID residual + per-unit calibration",
-         "learned_unit": "Learned observer + per-unit calibration"}
+         "learned_unit": "Learned observer + per-unit calibration",
+         "naive_kf": "ID residual, Kalman velocity", "observer_kf": "Observer, Kalman velocity",
+         "learned_kf": "Learned observer, Kalman velocity", "naive_kf_unit": "ID residual, Kalman + per-unit",
+         "learned_kf_unit": "Learned observer, Kalman + per-unit"}
 # Calibrate on arms the learned model never saw: per-joint scale (99th percentile of |r|) on one
 # held-out set, alarm threshold (1% of runs) on another.
 scale = {d: np.percentile(np.abs(res["val_normal"][d][100:]).reshape(-1, 6), 99, axis=0) for d in DETECTORS}
@@ -110,10 +129,13 @@ def add_fusion(name, pair, label):
 
 fa_fused = add_fusion("fused", ("learned", "naive"), "Fused (fleet model)")
 fa_fused_unit = add_fusion("fused_unit", ("learned_unit", "naive_unit"), "Fused + per-unit calibration")
+fa_fused_kf = add_fusion("fused_kf", ("learned_kf", "naive_kf"), "Fused + Kalman velocity")
+fa_fused_kf_unit = add_fusion("fused_kf_unit", ("learned_kf_unit", "naive_kf_unit"), "Fused + Kalman + per-unit")
 
 test = sets["test"]
 results = {"false_alarm_target": FA_TARGET, "detectors": {}}
-results["fusion_per_detector_fa"] = {"fused": float(fa_fused), "fused_unit": float(fa_fused_unit)}
+results["fusion_per_detector_fa"] = {"fused": float(fa_fused), "fused_unit": float(fa_fused_unit),
+                                     "fused_kf": float(fa_fused_kf), "fused_kf_unit": float(fa_fused_kf_unit)}
 for d in DETECTORS:
     hit, first = detect(score[d]["test"], thr[d])
     normal = test.fault == "none"
@@ -132,13 +154,13 @@ for d in DETECTORS:
 # ------------------------------------------------------------- diagnosis: alarms from the recommended detector
 # (fleet-model fusion); fault signature from the learned-observer residual, with and without
 # per-unit calibration
-DIAG_ALARM = "fused"
+DIAG_ALARM = "fused_kf"
 dtr = sets["diag_train"]
 hit_tr, first_tr = detect(score[DIAG_ALARM]["diag_train"], thr[DIAG_ALARM])
 hit_te, first_te = detect(score[DIAG_ALARM]["test"], thr[DIAG_ALARM])
 fm = (test.fault != "none") & hit_te
 diag = {}
-for DIAG_RES in ("learned", "learned_unit"):
+for DIAG_RES in ("learned", "learned_unit", "learned_kf", "learned_kf_unit"):
     Xtr = diagnosis_features(dtr, res["diag_train"][DIAG_RES] / scale[DIAG_RES], dyn, first_tr)
     clf = HistGradientBoostingClassifier(max_iter=300, random_state=0).fit(Xtr[hit_tr], dtr.fault[hit_tr])
     Xte = diagnosis_features(test, res["test"][DIAG_RES] / scale[DIAG_RES], dyn, first_te)
@@ -156,7 +178,8 @@ joint_pred = np.array([np.abs(r_norm[first_te[n]:first_te[n] + w, n].mean(0)).ar
 Ms = dyn.mass_matrix(sets["val_normal"].q[::100].reshape(-1, 6))
 noise_floor = (50.0 * np.sqrt(np.einsum("nii->ni", Ms @ Ms)).mean(0) * 2e-3)
 results["normal_residual_std_val"] = {d: res["val_normal"][d][100:].reshape(-1, 6).std(0).round(3).tolist()
-                                      for d in ("observer", "learned", "learned_unit")}
+                                      for d in ("observer", "learned", "learned_unit", "observer_kf",
+                                                "learned_kf", "learned_kf_unit")}
 results["observer_velocity_noise_floor_std"] = noise_floor.round(3).tolist()
 results["diagnosis"] = {"alarm_detector": DIAG_ALARM, "residual": DIAG_RES,
                         "accuracy_by_residual": {k: float((v[1] == test.fault[fm]).mean()) for k, v in diag.items()},
@@ -197,8 +220,8 @@ ax[0].legend(frameon=False, fontsize=8, loc="upper left")
 
 # (b) detection rate per fault at the same false-alarm rate
 xx = np.arange(len(FAULTS))
-SHOW = ["observer", "learned", "fused", "fused_unit"]
-cols = {"observer": ORANGE, "learned": BLUE, "fused": GRAY, "fused_unit": AQUA}
+SHOW = ["observer", "fused", "fused_kf", "fused_kf_unit"]
+cols = {"observer": ORANGE, "fused": GRAY, "fused_kf": BLUE, "fused_kf_unit": AQUA}
 for k, d in enumerate(SHOW):
     v = [results["detectors"][d]["per_fault"][f]["detection_rate"] for f in FAULTS]
     bars = ax[1].bar(xx + (k - 1.5) * 0.2, v, width=0.19, color=cols[d], label=NAMES[d], edgecolor=BG, lw=1)
