@@ -4,6 +4,8 @@
 
 ![tests](https://img.shields.io/badge/tests-84%20passing-2a78d6) ![python](https://img.shields.io/badge/python-3.11%2B-2a78d6) ![deps](https://img.shields.io/badge/stack-NumPy%20·%20SciPy%20·%20scikit--learn%20·%20OpenCV-8a8984)
 
+**▶ Try it in the browser:** [`docs/index.html`](docs/index.html). Draw or stamp shapes and text, watch the arm replay the job in 3D, and copy the RAPID module. It's served by GitHub Pages once Pages is enabled for `/docs`.
+
 ![Sketch to robot program](results/pathgen_demo.png)
 <sub>A hand-drawn PNG becomes 832 `MoveL` instructions for an ABB controller. Pen-up travel is cut by 87%, and every target is IK-verified before it reaches the robot.</sub>
 
@@ -162,6 +164,10 @@ The black-box GP memorises the training trajectory. The structured GP learns the
 
 Example outputs, ready to load in RobotStudio, are in [`examples/`](examples/) (`*.mod`).
 
+### Browser demo
+
+[`docs/`](docs/) is the same pipeline as a dependency-free web page. `core.js` is a line-for-line port of the kinematics, the damped-least-squares IK with analytic wrist-centre seeding, RDP, greedy + 2-opt ordering, marching-squares text outlines and the RAPID writer. `test_core.js` checks it against values from the Python implementation (FK, Jacobian and dexterity agree to 1e-5), and pytest runs those checks in CI. The page solves IK for every target as you draw, and flags unreachable points, joint jumps and near-singular poses live.
+
 ## 6 · Learned dexterity map and automatic placement
 
 `ml/dexterity.py`: where should the workpiece go? Checking one placement properly means an IK solve for every target, so brute-force search over thousands of placements takes most of an hour. Instead:
@@ -209,6 +215,7 @@ robotics/    dynamics.py (batched recursive Newton–Euler, armature, friction)
 ml/          neural_ik.py · bayes_opt.py · controller_tuning.py · rl_policy.py · gp_dynamics.py
              dexterity.py · fault_detection.py
 pathgen/     llm.py · sources.py · optimize.py · reach.py · rapid.py · pipeline.py
+docs/        browser demo: index.html + core.js (JS port, tested against Python)
 scripts/     one entry point per experiment (all reproducible, fixed seeds)
 tests/       84 pytest tests (GitHub Actions on every push)
 models/      neural IK, ES policy, dexterity map, fault residual + diagnosis models
@@ -237,4 +244,4 @@ examples/    sample sketch and generated RAPID programs
 - [x] Natural-language requests via Claude (tool use, validated plans)
 - [ ] Per-unit calibration of the learned normal model (closes the wear/actuator gap)
 - [ ] GP / learned residual dynamics and ES control on the full 6-DOF arm
-- [ ] Interactive browser demo: sketch in, RAPID out
+- [x] Interactive browser demo: sketch in, RAPID out

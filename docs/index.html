@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SynapseArm Sketch to RAPID</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* Layout: status strip on top, paper (input) beside the robot cell (result), program below. */
+  --bg: #eceee9;
+  --surface: #fafbf8;
+  --ink: #15181c;
+  --muted: #5b646d;
+  --line: #d3d8d0;
+  --accent: #0b6b6b;
+  --pen: #1f4fd1;
+  --travel: #c97d00;
+  --good: #1d7a3a;
+  --bad: #c0292b;
+  --paper: #ffffff;
+  --font-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111417; --surface: #191d21; --ink: #e7eae6; --muted: #9aa3ac; --line: #2d343a;
+    --accent: #45b8b8; --pen: #86a8ff; --travel: #f0b23d; --good: #4cc27a; --bad: #ff6b6b; --paper: #f4f4ef;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111417; --surface: #191d21; --ink: #e7eae6; --muted: #9aa3ac; --line: #2d343a;
+  --accent: #45b8b8; --pen: #86a8ff; --travel: #f0b23d; --good: #4cc27a; --bad: #ff6b6b; --paper: #f4f4ef;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--font-body); }
+.wrap { max-width: 1320px; margin: 0 auto; padding: 20px clamp(16px, 3vw, 32px) 40px; display: grid; gap: 16px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px; }
+h1 { font: 700 26px/1.15 var(--font-display); margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+h1 span { color: var(--accent); }
+.lede { margin: 4px 0 0; color: var(--muted); max-width: 70ch; }
+header a { color: var(--accent); font-weight: 600; text-decoration: none; }
+header a:hover { text-decoration: underline; }
+h2 { font: 600 13px/1.2 var(--font-body); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0; }
+
+.status { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 2px; }
+.stat .k { font-size: 12px; color: var(--muted); }
+.stat .v { font: 500 18px/1.2 var(--font-mono); font-variant-numeric: tabular-nums; }
+.stat .s { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.stat.good { border-left: 4px solid var(--good); }
+.stat.bad { border-left: 4px solid var(--bad); }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font: 600 12px/1.6 var(--font-body); }
+.pill.good { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
+.pill.bad { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+
+.grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 16px; }
+@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.panel-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
+button, .btn { font: 500 13px/1 var(--font-body); color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 7px 10px; cursor: pointer; }
+button:hover { border-color: var(--muted); }
+button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input[type="text"] { font: 14px var(--font-body); padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--paper); color: #15181c; width: 9.5em; }
+canvas { display: block; width: 100%; border-radius: 6px; touch-action: none; }
+#paper { background: var(--paper); border: 1px solid var(--line); cursor: crosshair; aspect-ratio: 297 / 210; }
+#cell { background: var(--bg); border: 1px solid var(--line); aspect-ratio: 4 / 3; cursor: grab; }
+.hint { font-size: 12.5px; color: var(--muted); margin: 0; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12.5px; color: var(--muted); }
+.legend i { display: inline-block; width: 18px; height: 0; border-top: 2.5px solid; vertical-align: middle; margin-right: 6px; }
+.controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px 16px; }
+.controls label { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; font-size: 12.5px; color: var(--muted); }
+.controls output { font: 12.5px var(--font-mono); color: var(--ink); font-variant-numeric: tabular-nums; }
+.controls input[type="range"] { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); }
+.code-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+pre { margin: 0; max-height: 340px; overflow: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  padding: 12px; font: 12.5px/1.55 var(--font-mono); color: var(--ink); }
+.muted { color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>SynapseArm <span>sketch → RAPID</span></h1>
+      <p class="lede">Draw on the sheet, or stamp shapes and text. Strokes are simplified, re-ordered to cut pen-up travel, solved with inverse kinematics on a 6-axis arm, and written out as an ABB RAPID module.</p>
+    </div>
+    <a href="https://github.com/blessedefe4real/SynapseArm">Source on GitHub →</a>
+  </header>
+
+  <section class="status" aria-label="Job summary" id="status"></section>
+
+  <div class="grid">
+    <section class="panel" aria-labelledby="paper-h">
+      <div class="panel-head">
+        <h2 id="paper-h">Sheet · A4, 297 × 210 mm</h2>
+        <div class="toolbar">
+          <button id="undo" type="button">Undo</button>
+          <button id="clear" type="button">Clear</button>
+          <button id="example" type="button">Example</button>
+        </div>
+      </div>
+      <div class="toolbar" role="toolbar" aria-label="Drawing tools">
+        <button type="button" data-tool="pen" aria-pressed="true">Pen</button>
+        <span class="sep"></span>
+        <button type="button" data-tool="star" aria-pressed="false">Star</button>
+        <button type="button" data-tool="heart" aria-pressed="false">Heart</button>
+        <button type="button" data-tool="spiral" aria-pressed="false">Spiral</button>
+        <button type="button" data-tool="hexagon" aria-pressed="false">Hexagon</button>
+        <button type="button" data-tool="circle" aria-pressed="false">Circle</button>
+        <span class="sep"></span>
+        <input id="text" type="text" value="Hello" aria-label="Text to stamp" maxlength="24">
+        <button type="button" data-tool="text" aria-pressed="false">Text</button>
+      </div>
+      <canvas id="paper" width="891" height="630" aria-label="Drawing sheet"></canvas>
+      <div class="legend"><span><i style="border-color:var(--pen)"></i>pen down</span><span><i style="border-color:var(--travel);border-top-style:dashed"></i>pen up (optimised order)</span><span class="muted" id="tool-hint">Drag to draw.</span></div>
+    </section>
+
+    <section class="panel" aria-labelledby="cell-h">
+      <div class="panel-head">
+        <h2 id="cell-h">Robot cell</h2>
+        <div class="toolbar">
+          <button id="play" type="button" class="primary">Play</button>
+          <button id="speed" type="button" title="Playback speed">Speed 1×</button>
+        </div>
+      </div>
+      <canvas id="cell" width="800" height="600" aria-label="3D view of the robot drawing the job"></canvas>
+      <p class="hint">Drag to orbit. Red dots are targets the arm can't reach with the pen pointing down; move the sheet with the sliders.</p>
+      <div class="controls">
+        <label for="px">Sheet x <output id="px-o"></output><input id="px" type="range" min="200" max="1400" step="10" value="700"></label>
+        <label for="py">Sheet y <output id="py-o"></output><input id="py" type="range" min="-800" max="600" step="10" value="-150"></label>
+        <label for="pz">Table height z <output id="pz-o"></output><input id="pz" type="range" min="-200" max="800" step="10" value="250"></label>
+        <label for="yaw">Sheet rotation <output id="yaw-o"></output><input id="yaw" type="range" min="-180" max="180" step="5" value="0"></label>
+        <label for="tol">Simplify tolerance <output id="tol-o"></output><input id="tol" type="range" min="0.05" max="1.5" step="0.05" value="0.1"></label>
+      </div>
+    </section>
+  </div>
+
+  <section class="panel" aria-labelledby="code-h">
+    <div class="code-head">
+      <h2 id="code-h">RAPID module</h2>
+      <div class="toolbar"><span class="muted" id="code-info"></span><button id="copy" type="button">Copy module</button></div>
+    </div>
+    <pre id="code" tabindex="0"></pre>
+  </section>
+</div>
+
+<script src="core.js"></script>
+<script>
+"use strict";
+const C = window.SynapseCore;
+const PAPER_W = 297, PAPER_H = 210;
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+// ------------------------------------------------------------------ state
+const state = { items: [], tool: "pen", drawing: null, ordered: [], plan: null, stats: null,
+  cell: { origin: [700, -150, 250], yaw: 0, pen: 120 }, tol: 0.1,
+  anim: { playing: false, t: 0, speed: 1 }, view: { az: -0.75, el: 0.5 } };
+
+// ------------------------------------------------------------------ paper canvas
+const paper = document.getElementById("paper"), pctx = paper.getContext("2d");
+function fitCanvas(cv) {
+  const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  const w = Math.max(200, Math.round(r.width * dpr)), h = Math.round(w * cv.height / cv.width);
+  if (cv.width !== w) { cv.width = w; cv.height = h; }
+}
+const toPx = ([x, y]) => [x / PAPER_W * paper.width, (1 - y / PAPER_H) * paper.height];
+function eventMM(ev) {
+  const r = paper.getBoundingClientRect();
+  return [(ev.clientX - r.left) / r.width * PAPER_W, (1 - (ev.clientY - r.top) / r.height) * PAPER_H];
+}
+
+function textStrokes(str, heightMM) {
+  const pxmm = 8, fontPx = Math.round(heightMM * pxmm * 1.35);
+  const cv = document.createElement("canvas"), cx = cv.getContext("2d");
+  cx.font = `600 ${fontPx}px "IBM Plex Sans", sans-serif`;
+  const w = Math.ceil(cx.measureText(str).width) + 8, h = Math.ceil(fontPx * 1.4);
+  cv.width = w; cv.height = h;
+  cx.font = `600 ${fontPx}px "IBM Plex Sans", sans-serif`; cx.textBaseline = "alphabetic"; cx.fillStyle = "#000";
+  cx.fillText(str, 4, Math.round(fontPx * 1.05));
+  const img = cx.getImageData(0, 0, w, h).data, mask = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) mask[i] = img[i * 4 + 3] > 110 ? 1 : 0;
+  const cs = C.contours(mask, w, h);
+  let minY = Infinity; cs.forEach(c => c.forEach(p => { minY = Math.min(minY, h - p[1]); }));
+  return cs.map(c => c.map(([x, y]) => [x / pxmm, (h - y - minY) / pxmm]));
+}
+
+function stamp(tool, at) {
+  let strokes;
+  if (tool === "text") {
+    const s = document.getElementById("text").value.trim(); if (!s) return;
+    strokes = textStrokes(s, 18);
+  } else strokes = C.shape(tool, tool === "spiral" ? 50 : 40);
+  let mx = 0, my = 0; strokes.forEach(s => s.forEach(p => { mx = Math.max(mx, p[0]); my = Math.max(my, p[1]); }));
+  const ox = at[0] - mx / 2, oy = at[1] - my / 2;
+  state.items.push(strokes.map(s => s.map(([x, y]) => [x + ox, y + oy])));
+  recompute();
+}
+
+paper.addEventListener("pointerdown", ev => {
+  paper.setPointerCapture(ev.pointerId);
+  const p = eventMM(ev);
+  if (state.tool === "pen") { state.drawing = [p]; drawPaper(); }
+  else stamp(state.tool, p);
+});
+paper.addEventListener("pointermove", ev => {
+  if (!state.drawing) return;
+  const p = eventMM(ev), last = state.drawing[state.drawing.length - 1];
+  if (Math.hypot(p[0] - last[0], p[1] - last[1]) > 0.4) { state.drawing.push(p); drawPaper(); }
+});
+const endStroke = () => {
+  if (state.drawing && state.drawing.length > 1) state.items.push([state.drawing]);
+  state.drawing = null; recompute();
+};
+paper.addEventListener("pointerup", endStroke);
+paper.addEventListener("pointercancel", endStroke);
+
+document.querySelectorAll("[data-tool]").forEach(b => b.addEventListener("click", () => {
+  state.tool = b.dataset.tool;
+  document.querySelectorAll("[data-tool]").forEach(x => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
+  document.getElementById("tool-hint").textContent = state.tool === "pen" ? "Drag to draw." : "Click the sheet to place it.";
+}));
+document.getElementById("undo").onclick = () => { state.items.pop(); recompute(); };
+document.getElementById("clear").onclick = () => { state.items = []; recompute(); };
+document.getElementById("example").onclick = () => { loadExample(); recompute(); };
+
+function drawPaper() {
+  fitCanvas(paper);
+  const W = paper.width, H = paper.height, k = W / PAPER_W;
+  pctx.clearRect(0, 0, W, H);
+  pctx.strokeStyle = "rgba(20,40,60,0.07)"; pctx.lineWidth = 1;
+  for (let x = 10; x < PAPER_W; x += 10) { pctx.beginPath(); pctx.moveTo(x * k, 0); pctx.lineTo(x * k, H); pctx.stroke(); }
+  for (let y = 10; y < PAPER_H; y += 10) { pctx.beginPath(); pctx.moveTo(0, H - y * k); pctx.lineTo(W, H - y * k); pctx.stroke(); }
+  pctx.fillStyle = "#5b646d"; pctx.font = `${11 * (window.devicePixelRatio || 1)}px IBM Plex Mono, monospace`;
+  pctx.fillText("0,0", 4, H - 4);
+  // optimised travel moves
+  pctx.setLineDash([5 * k / 3, 4 * k / 3]); pctx.strokeStyle = css("--travel"); pctx.lineWidth = Math.max(1, k * 0.35);
+  let pos = [0, 0];
+  for (const s of state.ordered) { pctx.beginPath(); pctx.moveTo(...toPx(pos)); pctx.lineTo(...toPx(s[0])); pctx.stroke(); pos = s[s.length - 1]; }
+  pctx.setLineDash([]);
+  pctx.strokeStyle = "#1f4fd1"; pctx.lineWidth = Math.max(1.5, k * 0.55); pctx.lineJoin = pctx.lineCap = "round";
+  for (const s of state.ordered) { pctx.beginPath(); s.forEach((p, i) => (i ? pctx.lineTo(...toPx(p)) : pctx.moveTo(...toPx(p)))); pctx.stroke(); }
+  if (state.drawing) {
+    pctx.strokeStyle = "#15181c"; pctx.beginPath();
+    state.drawing.forEach((p, i) => (i ? pctx.lineTo(...toPx(p)) : pctx.moveTo(...toPx(p)))); pctx.stroke();
+  }
+  // unreachable targets
+  if (state.plan) {
+    pctx.fillStyle = "#c0292b";
+    state.plan.targets.forEach((t, i) => { if (!state.plan.Q[i] && t.down) { const [x, y] = toPx([t.x, t.y]); pctx.beginPath(); pctx.arc(x, y, 3 * k / 3, 0, 7); pctx.fill(); } });
+  }
+}
+
+// ------------------------------------------------------------------ pipeline
+let timer = null;
+function recompute() {
+  clearTimeout(timer);
+  timer = setTimeout(run, 60);
+  drawPaper();
+}
+function run() {
+  const raw = state.items.flat().filter(s => s.length > 1)
+    .map(s => s.map(([x, y]) => [Math.min(PAPER_W, Math.max(0, x)), Math.min(PAPER_H, Math.max(0, y))]));
+  const simp = raw.map(s => C.rdp(s, state.tol)).filter(s => s.length > 1);
+  const greedy = C.orderStrokes(simp, [0, 0], false);
+  state.ordered = C.orderStrokes(simp, [0, 0], true);
+  state.plan = state.ordered.length ? C.planJoints(state.ordered, state.cell) : null;
+  state.stats = {
+    strokes: simp.length, rawPts: raw.reduce((a, s) => a + s.length, 0), pts: simp.reduce((a, s) => a + s.length, 0),
+    travelTraced: C.penUpTravel(simp), travelGreedy: C.penUpTravel(greedy), travel: C.penUpTravel(state.ordered),
+    drawLen: C.drawLength(state.ordered),
+  };
+  state.anim.t = 0;
+  renderStatus(); renderCode(); drawPaper(); drawCell();
+}
+
+function renderStatus() {
+  const s = state.stats, p = state.plan, el = document.getElementById("status");
+  if (!s || !s.strokes) { el.innerHTML = `<div class="stat"><span class="k">Job</span><span class="v">Empty sheet</span><span class="s">Draw something, or press Example.</span></div>`; return; }
+  const save = s.travelTraced > 0 ? 1 - s.travel / s.travelTraced : 0;
+  const ok = p && p.unreachable === 0;
+  const fmtM = mm => (mm >= 1000 ? (mm / 1000).toFixed(2) + " m" : mm.toFixed(0) + " mm");
+  el.innerHTML = `
+    <div class="stat"><span class="k">Strokes · targets</span><span class="v">${s.strokes} · ${s.pts}</span><span class="s">${s.rawPts} raw points, ≤ ${state.tol.toFixed(2)} mm deviation</span></div>
+    <div class="stat"><span class="k">Pen-up travel</span><span class="v">${fmtM(s.travel)}</span><span class="s">drawn order ${fmtM(s.travelTraced)} · ${(save * 100).toFixed(0)}% saved</span></div>
+    <div class="stat ${ok ? "good" : "bad"}"><span class="k">Reachability</span><span class="v"><span class="pill ${ok ? "good" : "bad"}">${ok ? "All reachable" : p.unreachable + " unreachable"}</span></span><span class="s">${p ? p.targets.length : 0} IK solves, pen pointing down</span></div>
+    <div class="stat ${p && p.maxStepDeg > 30 ? "bad" : ""}"><span class="k">Largest joint jump</span><span class="v">${p ? p.maxStepDeg.toFixed(1) : "–"}°</span><span class="s">between consecutive targets</span></div>
+    <div class="stat ${p && p.minDexterity < 0.03 ? "bad" : ""}"><span class="k">Worst dexterity</span><span class="v">${p ? p.minDexterity.toFixed(3) : "–"}</span><span class="s">0 = singular, 1 = isotropic</span></div>`;
+}
+
+function renderCode() {
+  const code = state.ordered.length ? C.toRapid(state.ordered, state.cell, { comment: `${state.stats.strokes} strokes drawn in the browser demo` })
+    : "! Nothing to draw yet.";
+  document.getElementById("code").textContent = code;
+  const n = (code.match(/MoveL/g) || []).length;
+  document.getElementById("code-info").textContent = `${code.split("\n").length} lines · ${n} MoveL`;
+}
+document.getElementById("copy").onclick = async ev => {
+  const b = ev.currentTarget;
+  try { await navigator.clipboard.writeText(document.getElementById("code").textContent); b.textContent = "Copied"; }
+  catch { b.textContent = "Select the text to copy"; }
+  setTimeout(() => (b.textContent = "Copy module"), 1600);
+};
+
+// ------------------------------------------------------------------ sliders
+const sliders = { px: v => (state.cell.origin[0] = v), py: v => (state.cell.origin[1] = v), pz: v => (state.cell.origin[2] = v),
+  yaw: v => (state.cell.yaw = v), tol: v => (state.tol = v) };
+const units = { px: " mm", py: " mm", pz: " mm", yaw: "°", tol: " mm" };
+Object.entries(sliders).forEach(([id, set]) => {
+  const el = document.getElementById(id), out = document.getElementById(id + "-o");
+  const upd = () => { const v = parseFloat(el.value); set(v); out.textContent = (id === "tol" ? v.toFixed(2) : v.toFixed(0)) + units[id]; };
+  upd(); el.addEventListener("input", () => { upd(); recompute(); });
+});
+
+// ------------------------------------------------------------------ 3D cell view
+const cell = document.getElementById("cell"), cctx = cell.getContext("2d");
+function viewCentre() {   // midway between the robot's shoulder and the middle of the sheet
+  const m = C.paperToWorld(state.cell, PAPER_W / 2, PAPER_H / 2);
+  return [m[0] / 2, m[1] / 2, (m[2] + 700) / 2];
+}
+function project(p) {
+  const { az, el } = state.view, W = cell.width, H = cell.height, s = Math.min(W, H) / 1750;
+  const c = viewCentre(), q = [p[0] - c[0], p[1] - c[1], p[2] - c[2]];
+  const x = q[0] * Math.cos(az) - q[1] * Math.sin(az), y = q[0] * Math.sin(az) + q[1] * Math.cos(az);
+  const sy = q[2] * Math.cos(el) - y * Math.sin(el);
+  return [W * 0.5 + x * s, H * 0.5 - sy * s];
+}
+function line3(a, b, color, width, dash) {
+  cctx.strokeStyle = color; cctx.lineWidth = width; cctx.setLineDash(dash || []);
+  cctx.beginPath(); cctx.moveTo(...project(a)); cctx.lineTo(...project(b)); cctx.stroke(); cctx.setLineDash([]);
+}
+function currentQ() {
+  const p = state.plan; if (!p) return [0, 0, 0, 0, 0.6, 0];
+  const n = p.Q.length, t = Math.min(state.anim.t, n - 1), i = Math.floor(t), f = t - i;
+  let a = p.Q[i], b = p.Q[Math.min(i + 1, n - 1)];
+  for (let k = i; !a && k >= 0; k--) a = p.Q[k];
+  if (!a) a = p.Q.find(q => q) || [0, 0, 0, 0, 0.6, 0];
+  if (!b) b = a;
+  return a.map((v, k) => v + (b[k] - v) * f);
+}
+function drawCell() {
+  fitCanvas(cell);
+  const W = cell.width, H = cell.height, dpr = window.devicePixelRatio || 1;
+  cctx.clearRect(0, 0, W, H);
+  const ink = css("--ink"), muted = css("--muted"), line = css("--line");
+  // floor grid
+  for (let v = -1250; v <= 1750; v += 250) line3([v, -1500, 0], [v, 1500, 0], line, 1);
+  for (let v = -1500; v <= 1500; v += 250) line3([-1250, v, 0], [1750, v, 0], line, 1);
+  // sheet
+  const corners = [[0, 0], [PAPER_W, 0], [PAPER_W, PAPER_H], [0, PAPER_H]].map(([x, y]) => C.paperToWorld(state.cell, x, y));
+  cctx.fillStyle = "rgba(255,255,255,0.92)"; cctx.strokeStyle = muted; cctx.lineWidth = 1;
+  cctx.beginPath(); corners.forEach((c, i) => (i ? cctx.lineTo(...project(c)) : cctx.moveTo(...project(c)))); cctx.closePath(); cctx.fill(); cctx.stroke();
+  const p = state.plan;
+  if (p) {
+    // full plan faint, drawn-so-far strong
+    const upto = Math.floor(state.anim.t);
+    for (let i = 1; i < p.targets.length; i++) {
+      const a = p.targets[i - 1], b = p.targets[i];
+      if (!(a.down && b.down && a.stroke === b.stroke)) continue;
+      const done = i <= upto;
+      line3(C.paperToWorld(state.cell, a.x, a.y), C.paperToWorld(state.cell, b.x, b.y),
+        done ? "#1f4fd1" : "rgba(31,79,209,0.22)", (done ? 2.2 : 1.2) * dpr);
+    }
+    cctx.fillStyle = "#c0292b";
+    p.targets.forEach((t, i) => { if (!p.Q[i]) { const [x, y] = project(C.paperToWorld(state.cell, t.x, t.y, t.z)); cctx.beginPath(); cctx.arc(x, y, 3 * dpr, 0, 7); cctx.fill(); } });
+  }
+  // robot
+  const F = C.frames(currentQ()), O = F.map(T => [T[3], T[7], T[11]]);
+  const z6 = [F[6][2], F[6][6], F[6][10]], tip = [0, 1, 2].map(i => O[6][i] + z6[i] * state.cell.pen);
+  const base = [0, 0, 0];
+  const chain = [base, [0, 0, 505], O[1], O[2], O[3], O[4], O[6]];
+  const widths = [26, 22, 18, 14, 12, 9];
+  for (let i = 0; i < chain.length - 1; i++) {
+    cctx.lineCap = "round";
+    line3(chain[i], chain[i + 1], i % 2 ? "#e2a400" : "#d18f00", widths[Math.min(i, widths.length - 1)] * dpr * 0.55);
+  }
+  line3(O[6], tip, ink, 3 * dpr);
+  cctx.fillStyle = ink;
+  [base, [0, 0, 505], O[1], O[2], O[3], O[4]].forEach(o => { const [x, y] = project(o); cctx.beginPath(); cctx.arc(x, y, 3.2 * dpr, 0, 7); cctx.fill(); });
+  // base plate
+  const [bx, by] = project(base); cctx.fillStyle = muted; cctx.beginPath(); cctx.ellipse(bx, by, 34 * dpr, 12 * dpr, 0, 0, 7); cctx.fill();
+  cctx.fillStyle = muted; cctx.font = `${11 * dpr}px IBM Plex Mono, monospace`;
+  if (p) cctx.fillText(`target ${Math.min(Math.floor(state.anim.t) + 1, p.targets.length)} / ${p.targets.length}`, 10 * dpr, 18 * dpr);
+}
+
+// orbit
+let drag = null;
+cell.addEventListener("pointerdown", ev => { cell.setPointerCapture(ev.pointerId); drag = [ev.clientX, ev.clientY, state.view.az, state.view.el]; cell.style.cursor = "grabbing"; });
+cell.addEventListener("pointermove", ev => {
+  if (!drag) return;
+  state.view.az = drag[2] + (ev.clientX - drag[0]) * 0.008;
+  state.view.el = Math.max(0.05, Math.min(1.45, drag[3] + (ev.clientY - drag[1]) * 0.006));
+  if (!state.anim.playing) drawCell();
+});
+const endDrag = () => { drag = null; cell.style.cursor = "grab"; };
+cell.addEventListener("pointerup", endDrag); cell.addEventListener("pointercancel", endDrag);
+
+// animation
+const playBtn = document.getElementById("play"), speedBtn = document.getElementById("speed");
+let last = 0;
+function tick(ts) {
+  if (!state.anim.playing) return;
+  const dt = last ? (ts - last) / 1000 : 0; last = ts;
+  const n = state.plan ? state.plan.targets.length : 0;
+  state.anim.t += dt * 25 * state.anim.speed;
+  if (state.anim.t >= n - 1) { state.anim.t = n - 1; state.anim.playing = false; playBtn.textContent = "Replay"; }
+  drawCell();
+  if (state.anim.playing) requestAnimationFrame(tick);
+}
+playBtn.onclick = () => {
+  if (!state.plan) return;
+  if (state.anim.playing) { state.anim.playing = false; playBtn.textContent = "Play"; return; }
+  if (state.anim.t >= state.plan.targets.length - 1) state.anim.t = 0;
+  state.anim.playing = true; playBtn.textContent = "Pause"; last = 0; requestAnimationFrame(tick);
+};
+speedBtn.onclick = () => {
+  state.anim.speed = { 1: 4, 4: 16, 16: 1 }[state.anim.speed];
+  speedBtn.textContent = `Speed ${state.anim.speed}×`;
+};
+
+// ------------------------------------------------------------------ example + start
+function loadExample() {
+  state.items = [];
+  const place = (strokes, ox, oy) => state.items.push(strokes.map(s => s.map(([x, y]) => [x + ox, y + oy])));
+  place(textStrokes("SynapseArm", 26), 18, 140);
+  place(C.shape("star", 46), 222, 128);
+  place(C.shape("spiral", 62), 28, 24);
+  place(C.shape("heart", 48), 128, 36);
+  place(C.shape("hexagon", 44), 218, 34);
+}
+window.addEventListener("resize", () => { drawPaper(); drawCell(); });
+(async () => {
+  try { await document.fonts.load('600 40px "IBM Plex Sans"'); } catch (e) { /* fall back to system font */ }
+  loadExample(); run();
+  state.anim.t = state.plan ? state.plan.targets.length - 1 : 0;   // open on the finished drawing
+  drawCell();
+  playBtn.textContent = "Replay";
+})();
+</script>
+</body>
+</html>
