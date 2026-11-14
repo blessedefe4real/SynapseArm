@@ -1,0 +1,134 @@
+{
+  "false_alarm_target": 0.01,
+  "detectors": {
+    "naive": {
+      "false_alarm_rate_test": 0.005,
+      "auc": 0.9404125,
+      "per_fault": {
+        "collision": {
+          "detection_rate": 0.99,
+          "median_delay_ms": 43.81558489316228
+        },
+        "payload": {
+          "detection_rate": 0.97,
+          "median_delay_ms": 39.26783986949112
+        },
+        "wear": {
+          "detection_rate": 0.79,
+          "median_delay_ms": 70.9067697093042
+        },
+        "actuator": {
+          "detection_rate": 0.61,
+          "median_delay_ms": 58.716232774460586
+        }
+      },
+      "early_alarm_frac_faulty": 0.005
+    },
+    "observer": {
+      "false_alarm_rate_test": 0.0,
+      "auc": 0.9281375,
+      "per_fault": {
+        "collision": {
+          "detection_rate": 0.99,
+          "median_delay_ms": 44.2434028376022
+        },
+        "payload": {
+          "detection_rate": 0.96,
+          "median_delay_ms": 40.05673779808938
+        },
+        "wear": {
+          "detection_rate": 0.74,
+          "median_delay_ms": 103.48183185732451
+        },
+        "actuator": {
+          "detection_rate": 0.64,
+          "median_delay_ms": 64.63612229689231
+        }
+      },
+      "early_alarm_frac_faulty": 0.0
+    },
+    "learned": {
+      "false_alarm_rate_test": 0.005,
+      "auc": 0.9415375,
+      "per_fault": {
+        "collision": {
+          "detection_rate": 1.0,
+          "median_delay_ms": 40.48614217975333
+        },
+        "payload": {
+          "detection_rate": 1.0,
+          "median_delay_ms": 34.827944276810015
+        },
+        "wear": {
+          "detection_rate": 0.61,
+          "median_delay_ms": 85.17176283775507
+        },
+        "actuator": {
+          "detection_rate": 0.61,
+          "median_delay_ms": 43.30297972203567
+        }
+      },
+      "early_alarm_frac_faulty": 0.01
+    },
+    "fused": {
+      "false_alarm_rate_test": 0.01,
+      "auc": 0.9509375000000001,
+      "per_fault": {
+        "collision": {
+          "detection_rate": 1.0,
+          "median_delay_ms": 40.22645230013744
+        },
+        "payload": {
+          "detection_rate": 1.0,
+          "median_delay_ms": 32.582603225235204
+        },
+        "wear": {
+          "detection_rate": 0.84,
+          "median_delay_ms": 50.24077892438261
+        },
+        "actuator": {
+          "detection_rate": 0.69,
+          "median_delay_ms": 43.30297972203567
+        }
+      },
+      "early_alarm_frac_faulty": 0.015
+    }
+  },
+  "fusion_per_detector_fa": 0.005,
+  "diagnosis": {
+    "accuracy": 0.8291925465838509,
+    "labels": [
+      "collision",
+      "payload",
+      "wear",
+      "actuator"
+    ],
+    "confusion_matrix": [
+      [
+        98,
+        0,
+        2,
+        0
+      ],
+      [
+        0,
+        96,
+        2,
+        2
+      ],
+      [
+        0,
+        2,
+        31,
+        28
+      ],
+      [
+        0,
+        2,
+        17,
+        42
+      ]
+    ],
+    "joint_localisation_accuracy": 1.0
+  }
+}

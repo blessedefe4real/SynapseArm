@@ -8,7 +8,8 @@ in mm is converted once.
 
 Inertial model: each body is a slender rod along its D-H link segment (from the previous frame
 origin to its own), plus a solid-cylinder radius term, with IRB-class masses. A payload hangs
-on the flange. These are plausible values, not a datasheet. The algorithms don't depend on them.
+on the flange, and each joint carries reflected motor inertia (armature). These are plausible
+values, not a datasheet. The algorithms don't depend on them.
 """
 from __future__ import annotations
 
@@ -35,6 +36,8 @@ class ArmDynamics:
     payload_offset_m: tuple = (0.0, 0.0, 0.10)        # in flange frame
     viscous: np.ndarray = field(default_factory=lambda: np.array([8.0, 8.0, 5.0, 1.5, 1.0, 0.5]))
     coulomb: np.ndarray = field(default_factory=lambda: np.array([6.0, 6.0, 4.0, 1.0, 0.8, 0.4]))
+    # reflected motor-rotor inertia J_m N^2 (kg m^2): dominates the wrist joints on real arms
+    armature: np.ndarray = field(default_factory=lambda: np.array([1.5, 1.5, 0.8, 0.2, 0.2, 0.1]))
 
     def __post_init__(self):
         r = self.robot
@@ -122,6 +125,7 @@ class ArmDynamics:
             f = f_new
             # joint axis z_{i-1} expressed in frame i
             tau[:, i] = np.einsum("nj,nj->n", nn, RT[:, i] @ z)
+        tau = tau + self.armature * qdd
         if friction:
             tau = tau + self.viscous * qd + self.coulomb * np.tanh(qd / 0.02)
         return tau
