@@ -4,7 +4,7 @@
 
 ![tests](https://img.shields.io/badge/tests-96%20passing-2a78d6) ![python](https://img.shields.io/badge/python-3.11%2B-2a78d6) ![deps](https://img.shields.io/badge/stack-NumPy%20·%20SciPy%20·%20scikit--learn%20·%20OpenCV-8a8984)
 
-**▶ Try it in the browser:** [`docs/index.html`](docs/index.html). Draw or stamp shapes and text, watch the arm replay the job in 3D, and copy the RAPID module. It's served by GitHub Pages once Pages is enabled for `/docs`.
+**▶ [Try it live in your browser](https://blessedefe4real.github.io/SynapseArm/)**. Draw or stamp shapes and text, watch the arm replay the job in 3D, and copy the RAPID module. Source: [`docs/`](docs/).
 
 ![Sketch to robot program](results/pathgen_demo.png)
 <sub>A hand-drawn PNG becomes 832 `MoveL` instructions for an ABB controller. Pen-up travel is cut by 87%, and every target is IK-verified before it reaches the robot.</sub>
