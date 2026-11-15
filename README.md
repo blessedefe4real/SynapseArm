@@ -2,7 +2,7 @@
 
 **A learning brain for a 6-DOF industrial arm.** It combines classical robotics (kinematics, computed-torque control, Routh–Hurwitz stability) with machine learning that makes the arm faster to solve, more robust to model error, and able to draw whatever you hand it.
 
-![tests](https://img.shields.io/badge/tests-90%20passing-2a78d6) ![python](https://img.shields.io/badge/python-3.11%2B-2a78d6) ![deps](https://img.shields.io/badge/stack-NumPy%20·%20SciPy%20·%20scikit--learn%20·%20OpenCV-8a8984)
+![tests](https://img.shields.io/badge/tests-96%20passing-2a78d6) ![python](https://img.shields.io/badge/python-3.11%2B-2a78d6) ![deps](https://img.shields.io/badge/stack-NumPy%20·%20SciPy%20·%20scikit--learn%20·%20OpenCV-8a8984)
 
 **▶ Try it in the browser:** [`docs/index.html`](docs/index.html). Draw or stamp shapes and text, watch the arm replay the job in 3D, and copy the RAPID module. It's served by GitHub Pages once Pages is enabled for `/docs`.
 
@@ -19,7 +19,8 @@
 | **GP dynamics learning** | Learns unmodelled friction, cogging and parameter error, then adds them as feed-forward | **15×** better tracking on a trajectory it never trained on, after one 20 s run |
 | **Sketch → robot program** | Vision or plain English (Claude) → strokes → TSP ordering → reachability check → ABB RAPID | **−87%** pen-up travel, **−70%** targets at ≤0.1 mm deviation, 0 unreachable points |
 | **Learned dexterity map** | Gradient-boosted surrogate of IK reachability and Jacobian conditioning picks where to put the workpiece | **11×** better worst-case dexterity; searches 6,000 placements in **5 s** vs ~55 min of brute-force IK |
-| **6-DOF dynamics + fault detection** | Batched Newton–Euler dynamics; momentum observer fused with a learned model of normal behaviour | **100%** of collisions caught in **41 ms** at 1% false alarms (AUC 0.978); faulty joint located **97%** of the time |
+| **6-DOF dynamics + fault detection** | Batched Newton–Euler dynamics; momentum observer fused with a learned model of normal behaviour | **100%** of collisions caught in **40 ms** at ≤1% false alarms (AUC 0.978); faulty joint located **96%** of the time |
+| **6-DOF learned control** | Feed-forward learned from one 10 s excitation run, then ES tunes all 12 servo gains | Tool error **2.13 → 0.066 mm (32×)** on unseen arms and trajectories, with **42% less** torque chatter |
 
 Everything is reproducible from a script, benchmarked on **held-out** data, and covered by unit tests. The tests check the robotics against hand-derived closed forms, and the ML against known answers.
 
@@ -37,6 +38,7 @@ flowchart LR
         GP[GP residual dynamics]
         DX[Dexterity map]
         FD[Fault detection<br/>+ diagnosis]
+        AL[6-DOF learned<br/>feed-forward + ES gains]
     end
     subgraph PG["pathgen/"]
         LLM[Plain English · Claude] --> SRC
@@ -45,14 +47,14 @@ flowchart LR
     DH --> NIK --> RCH
     DH --> DX --> PLC
     CT --> BO & ES & GP
-    RB --> FD
+    RB --> FD & AL
 ```
 
 ## Quick start
 
 ```bash
 pip install -r requirements.txt
-pytest                                                  # 90 tests, ~2 min
+pytest                                                  # 96 tests, ~5 min
 
 python scripts/draw.py "draw a 7-pointed star 60 mm"    # -> results/drawing.{mod,png,json}
 python scripts/draw.py "write 'Hello robot' 25 mm"
@@ -66,7 +68,8 @@ python scripts/tune_controller.py       # ~1.5 min    Bayesian-optimised gains
 python scripts/train_rl_controller.py   # ~5 min      evolution-strategies neural controller
 python scripts/learn_dynamics.py        # ~2 min      GP dynamics learning
 python scripts/train_dexterity_map.py   # ~4 min      learned dexterity map + placement demo
-python scripts/fault_detection.py       # ~10 min     fleet simulation, fault detection + diagnosis
+python scripts/fault_detection.py       # ~40 min     fleet simulation, fault detection + diagnosis
+python scripts/arm_learning.py          # ~8 min      6-DOF learned feed-forward + ES gain tuning
 python scripts/plot_workspace.py        #             reachable workspace, coloured by manipulability
 ```
 
@@ -187,17 +190,18 @@ On a 300 mm drawing, worst-case dexterity goes from **0.021** (default placement
 
 `ml/fault_detection.py` puts it to work on a **simulated fleet**. Each arm has its own friction (viscous and Coulomb ±30% unit to unit, plus a Stribeck static-friction term) and payload variation, and runs random moves under computed-torque control that knows only the rigid-body model. Four faults are injected at random times: **collisions** (40–150 N on the tool), an **unexpected payload** (1.5–4 kg), **joint wear** (friction ×2–3) and **actuator degradation** (60–80% of commanded torque). All detectors use only measured joint positions, velocities and commanded torque:
 
-| Detector, 1% false alarms on unseen arms | Collision | Payload | Wear | Actuator | AUC |
-|---|---|---|---|---|---|
-| Inverse-dynamics residual | 100% · 47 ms | 97% · 35 ms | 84% · 121 ms | 58% · 41 ms | 0.957 |
-| Momentum observer (rigid-body model) | 100% · 47 ms | 95% · 38 ms | 74% · 205 ms | 60% · 43 ms | 0.943 |
-| Observer − learned fleet model | 100% · 41 ms | 100% · 32 ms | 67% · 140 ms | 62% · 39 ms | 0.959 |
-| Fused (learned observer OR ID residual) | 100% · 41 ms | 100% · 31 ms | 84% · 79 ms | 68% · 43 ms | 0.966 |
-| **Fused + Kalman velocity estimate** | **100% · 41 ms** | **100% · 34 ms** | **88% · 56 ms** | **75% · 45 ms** | **0.978** |
-| Fused + per-unit calibration | 100% · 41 ms | 99% · 32 ms | 70% · 433 ms | 43% · 28 ms | 0.945 |
-| Fused + Kalman + per-unit calibration | 100% · 40 ms | 100% · 32 ms | 75% · 150 ms | 53% · 31 ms | 0.957 |
+| Detector (unseen arms) | False alarms | Collision | Payload | Wear | Actuator | AUC | At matched 1%: wear / actuator |
+|---|---|---|---|---|---|---|---|
+| Inverse-dynamics residual | 1.5% | 100% · 47 ms | 97% · 35 ms | 84% · 121 ms | 58% · 41 ms | 0.957 | 83% / 57% |
+| Momentum observer (rigid-body model) | 0.5% | 100% · 47 ms | 95% · 38 ms | 74% · 205 ms | 60% · 43 ms | 0.943 | 75% / 63% |
+| Observer − learned fleet model | 1.5% | 100% · 40 ms | 100% · 32 ms | 71% · 163 ms | 65% · 41 ms | 0.960 | 69% / 64% |
+| Fused (learned observer OR ID residual) | 1.0% | 100% · 40 ms | 100% · 31 ms | 84% · 79 ms | 67% · 40 ms | 0.966 | 85% / 67% |
+| **Fused + Kalman velocity estimate (recommended)** | 0.5% | 100% · 40 ms | 100% · 34 ms | 88% · 54 ms | 76% · 45 ms | 0.978 | 89% / 76% |
+| Fused + per-unit calibration (ordinary move) | 3.0% | 100% · 41 ms | 99% · 32 ms | 73% · 312 ms | 47% · 28 ms | 0.953 | 52% / 44% |
+| Fused + Kalman + per-unit calibration (ordinary move) | 1.5% | 100% · 41 ms | 99% · 31 ms | 70% · 312 ms | 48% · 28 ms | 0.954 | 68% / 47% |
+| Fused + Kalman + per-unit calibration (excitation run) | 2.0% | 100% · 37 ms | 100% · 28 ms | 94% · 47 ms | 79% · 42 ms | 0.992 | 89% / 62% |
 
-<sub>Detection rate · median delay from fault onset. 200 fault-free and 400 faulty test runs on arms never seen in training or calibration.</sub>
+<sub>Detection rate · median delay from fault onset, with alarm thresholds set on separate calibration arms to target 1% false alarms (the column shows what each detector actually got on the test arms). The last column holds every detector to exactly 1% false alarms on the test arms, one point of the ROC curve, so detectors compare free of threshold-estimation noise. 200 fault-free and 400 faulty test runs on arms never seen in training or calibration.</sub>
 
 ![Fault detection](results/fault_detection.png)
 
@@ -206,17 +210,41 @@ What made the difference:
 - **Physics first, learning second.** The generalised-momentum observer estimates external torque without measuring acceleration. The gradient-boosted model learns only what physics leaves out (fleet-average friction), from fault-free runs. It's trained on the *de-filtered* target `r + ṙ/K`, and its prediction goes through the observer's own filter. That way the observer's lag at velocity reversals matches the model, instead of showing up as false spikes.
 - **Calibrate on unseen arms.** An early version set per-joint scales on the training arms, where the learned residual is optimistically small. That inflated the alarm threshold, and the learned detector looked *worse* than the plain observer. Scales and thresholds now come from two separate held-out sets of arms.
 - **Fuse complementary residuals.** The learned observer is best for sudden events (collisions, payload). The inverse-dynamics residual is best for slow friction wear on the big joints. An OR-fusion, with both thresholds tuned jointly so the union stays at 1% false alarms, beats each one on every fault type.
-- **Estimate velocity, don't just measure it.** Once the fleet model removes friction, what's left on the big joints is mostly sensor noise. The observer contains K·M(q)·q̇, so encoder-velocity noise passes straight through, scaled by the base joints' large inertia; that predicts 3.3–3.4 N·m against ~4–5 N·m observed. A per-joint **Kalman filter** fuses encoder position and velocity, with the *planned* acceleration as its input (known in advance and independent of any fault, so it can't explain a fault away). It's tuned on a separate fleet against ground-truth velocity, and cuts big-joint velocity error 3.3×. The learned residual on joint 1 drops from 4.2 to 1.6 N·m std. Wear is caught 88% of the time and 23 ms sooner, actuator faults 75% (from 68%), and AUC rises to 0.978, all still at 1% false alarms. The inverse-dynamics residual doesn't change, as expected, because velocity only enters it through the small Coriolis term.
-- **Diagnosis.** A classifier on the post-alarm residual signature names the fault 84% of the time: collisions 99% and payload 97%. Wear and actuator faults are the hard pair because both look like extra effort on one joint. The faulty joint itself is located 97% of the time.
+- **Estimate velocity, don't just measure it.** Once the fleet model removes friction, what's left on the big joints is mostly sensor noise. The observer contains K·M(q)·q̇, so encoder-velocity noise passes straight through, scaled by the base joints' large inertia; that predicts 3.3–3.4 N·m against ~4–5 N·m observed. A per-joint **Kalman filter** fuses encoder position and velocity, with the *planned* acceleration as its input (known in advance and independent of any fault, so it can't explain a fault away). It's tuned on a separate fleet against ground-truth velocity, and cuts big-joint velocity error 3.3×. The learned residual on joint 1 drops from 4.2 to 1.6 N·m std. Wear is caught 88% of the time in 54 ms (from 84% in 79 ms), actuator faults 76% (from 67%), and AUC rises to 0.978, at 0.5% false alarms. The inverse-dynamics residual doesn't change, as expected, because velocity only enters it through the small Coriolis term.
+- **Diagnosis.** A classifier on the post-alarm residual signature names the fault 86% of the time: collisions 99% and payload 97%. Wear and actuator faults are the hard pair because both look like extra effort on one joint. The faulty joint itself is located 96% of the time.
 
-**A negative result: per-unit calibration doesn't help.** The obvious next idea was to calibrate each arm. Give every unit a fault-free commissioning run, identify four physical parameters per joint (viscous, Coulomb, payload gravity, offset) on what the fleet model leaves, freeze them, and subtract them in operation. The two calibration rows show it made detection *worse*, with or without the Kalman filter, and diagnosis didn't improve (81–82% vs 84%).
+**Per-unit calibration: what worked, what didn't.** Each arm gets a fault-free commissioning run. Four physical parameters per joint (viscous, Coulomb, payload gravity, offset) are identified on what the fleet model leaves, frozen, and subtracted in operation.
 
-- **Without the filter**, calibration can barely change the residual on new trajectories (joint 1 std 4.18 → 4.20 N·m), because what's left is sensor noise. That finding is what led to the Kalman filter.
-- **With the filter**, calibration does lower the residual's spread (joint 1 1.57 → 1.27 N·m, joint 2 3.73 → 2.74), yet detection still drops. The four parameters are fitted on one 6 s commissioning trajectory and extrapolate badly to new motions. The occasional large errors that follow fatten the tails that set the alarm threshold: on test arms, false alarms run at 2% against the 1% target.
+- **Calibrating on an ordinary move makes detection worse,** with or without the Kalman filter. Without the filter there's nothing left to calibrate: the residual is sensor noise (joint 1 std 4.18 → 4.19 N·m), which is what led to the filter. With it, calibration lowers the spread, but parameters fitted on a 6 s point-to-point move extrapolate badly to new motions, and the occasional large errors fatten the alarm-setting tail.
+- **Calibrating on a 10 s Fourier excitation run is the fix for the model.** That's the standard identification trajectory, sweeping every joint both ways over 5× the velocity range. The learned residual's spread falls to 1.3 / 2.2 / 1.2 N·m on joints 1–3, and the features are clamped to the commissioning range, so nothing extrapolates. Separation improves clearly (AUC 0.992 vs 0.978). With thresholds set on the calibration arms it catches 94% of wear and 79% of actuator faults, faster.
+- **But not at the strict 1% tail.** On the test arms those thresholds give 2% false alarms, not 1%. Held to exactly 1%, it detects 89% / 62% (wear / actuator) against 89% / 76% for the uncalibrated Kalman detector. A few arms' calibrations still give heavy-tailed residuals; Gumbel (extreme-value) thresholds didn't change that, so it's the arms, not the threshold estimate. With 200 arms per set, a 1% rate is also only known to about ±0.7%.
 
-Lower average error isn't the same as better detection; the tail of the normal distribution is what matters. The code and tests stay in (`UnitCalibration`), with the result recorded. Calibrating from richer commissioning motions, or penalising tail error rather than squared error, is where to look next.
+So the recommendation is the Kalman detector without calibration for a strict 1% false-alarm budget. Excitation calibration is the better choice where ~2% is acceptable, or as a second-stage check after an alarm. Lower average error isn't the same as better detection: the tail of the normal distribution is what matters.
 
 A related physics check in the tests: each faulty arm is compared with its fault-free twin (same unit, trajectory and sensor noise). Residuals agree exactly until onset. A weakened motor on a lightly loaded wrist joint shifts the residual by only ~0.3 N·m, which is why actuator faults are the hardest class.
+
+## 8 · Learning on the full 6-DOF arm
+
+`ml/arm_learning.py` takes the ideas from §2–4 from one axis to the whole arm, on the same simulated fleet as §7: unit-specific viscous, Coulomb and Stribeck friction, plus payload variation that the rigid-body controller doesn't know about.
+
+- **Learned feed-forward from one excitation run.** Each arm makes one 10 s Fourier-excitation move. The momentum observer, fed by the Kalman velocity estimate, recovers the torque the model missed without measuring acceleration. Its de-filtered version is fitted per joint with a structured model: a physics mean (viscous, Coulomb, payload gravity, offset), plus a GP on joint velocity for what that basis can't express (Stribeck static friction). The model is then used as feed-forward on **different, unseen** trajectories. Learning from an excitation run rather than an ordinary move turned out to be the key, as in §7: it covers the velocities the next job will need.
+- **Servo gains by evolution strategies.** All 12 gains (kp, kd per joint) are tuned with the learned feed-forward in the loop. The objective is the best tracking without more torque chatter than the factory gains (kp 400, kd 40). Every candidate is simulated on every training arm in one batch, with common random numbers, so candidates differ only by their gains.
+
+12 held-out arms, unseen 6 s trajectories:
+
+| Controller | Tool RMS error (mm) | Tool max (mm) | Joint RMS 1–6 (mrad) | Torque chatter (N·m/s) |
+|---|---|---|---|---|
+| Rigid-body model only | 2.131 | 3.83 | 0.82 / 1.57 / 4.23 / 16.76 / 12.82 / 13.29 | 692 |
+| + learned feed-forward (physics basis) | 0.134 | 0.40 | 0.06 / 0.09 / 0.20 / 0.63 / 0.64 / 0.87 | 692 |
+| + learned feed-forward (physics + GP) | 0.139 | 0.44 | 0.07 / 0.09 / 0.20 / 0.49 / 0.49 / 0.83 | 692 |
+| **+ learned feed-forward + ES gains** | 0.066 | 0.26 | 0.02 / 0.05 / 0.11 / 0.24 / 0.16 / 0.73 | 399 |
+| Perfect model (oracle feed-forward) | 0.087 | 0.28 | 0.05 / 0.04 / 0.04 / 0.04 / 0.05 / 0.05 | 692 |
+
+![6-DOF learning](results/arm_learning.png)
+
+- **Learned feed-forward cuts tool error 16×** (2.13 → 0.134 mm), and wrist-joint error ~25×. The GP term improves the wrist joints, where Stribeck friction lives, but is neutral on tool error.
+- **ES-tuned gains halve it again, to 0.066 mm (32× overall), with 42% less torque chatter.** ES raised stiffness on the big joints (kp 1677, 883, 808, 907, 1495, 526) and cut damping where velocity noise was costing chatter (kd 17, 23, 24, 77, 38, 23). That's why it even beats perfect-model feed-forward on factory gains (0.087 mm), whose remaining error is noise-driven jitter.
+- **A bug this caught.** The first "perfect model" baseline did *worse* than the learned model. The cause was a payload term with shape (N,) multiplied against (steps, N, 6), which NumPy silently broadcast along the joint axis. It's fixed, and the oracle now tracks to 0.05 mrad; a test pins it.
 
 ---
 
@@ -226,11 +254,11 @@ A related physics check in the tests: each faulty arm is compared with its fault
 robotics/    kinematics.py (D-H, FK, Jacobian, DLS IK, analytic wrist-centre IK), workspace.py, control.py
 robotics/    dynamics.py (batched recursive Newton–Euler, armature, friction)
 ml/          neural_ik.py · bayes_opt.py · controller_tuning.py · rl_policy.py · gp_dynamics.py
-             dexterity.py · fault_detection.py
+             dexterity.py · fault_detection.py · arm_learning.py
 pathgen/     llm.py · sources.py · optimize.py · reach.py · rapid.py · pipeline.py
 docs/        browser demo: index.html + core.js (JS port, tested against Python)
 scripts/     one entry point per experiment (all reproducible, fixed seeds)
-tests/       90 pytest tests (GitHub Actions on every push)
+tests/       96 pytest tests (GitHub Actions on every push)
 models/      neural IK, ES policy, dexterity map, fault residual + diagnosis models
 results/     benchmark JSON + figures
 examples/    sample sketch and generated RAPID programs
@@ -257,6 +285,6 @@ examples/    sample sketch and generated RAPID programs
 - [x] Natural-language requests via Claude (tool use, validated plans)
 - [x] Per-unit calibration: tried, measured, doesn't help (noise floor, see §7)
 - [x] Kalman velocity estimation: lower noise floor, better wear and actuator detection
-- [ ] Per-unit calibration from richer commissioning motions (tail-aware fitting)
-- [ ] GP / learned residual dynamics and ES control on the full 6-DOF arm
+- [x] Per-unit calibration from excitation runs: better separation (AUC 0.992); at a strict 1% budget the uncalibrated Kalman detector still wins
+- [x] Learned feed-forward and ES-tuned gains on the full 6-DOF arm (32× lower tool error)
 - [x] Interactive browser demo: sketch in, RAPID out

@@ -53,16 +53,16 @@ def flange_point_jacobian(dyn: ArmDynamics, q, offset_m=(0.0, 0.0, 0.1)):
 
 
 # --------------------------------------------------------------------------- trajectories
-def random_moves(n_runs, rng, robot):
+def random_moves(n_runs, rng, robot, t_run=T_RUN):
     """Quintic point-to-point joint moves: 2 moves per run, rest-to-rest."""
-    steps = int(T_RUN / DT)
+    steps = int(t_run / DT)
     t = np.arange(steps) * DT
     lo = np.deg2rad([-150, -60, -60, -150, -100, -180])
     hi = np.deg2rad([150, 90, 90, 150, 100, 180])
     W = lo + rng.random((n_runs, 3, 6)) * (hi - lo)
     W[:, 1] = W[:, 0] + np.clip(W[:, 1] - W[:, 0], -1.2, 1.2)
     W[:, 2] = W[:, 1] + np.clip(W[:, 2] - W[:, 1], -1.2, 1.2)
-    seg = T_RUN / 2
+    seg = t_run / 2
     q, qd, qdd = (np.empty((steps, n_runs, 6)) for _ in range(3))
     for k in range(2):
         m = (t >= k * seg) & (t < (k + 1) * seg) if k == 0 else t >= k * seg
@@ -72,6 +72,31 @@ def random_moves(n_runs, rng, robot):
         ddb = (60 * s - 180 * s ** 2 + 120 * s ** 3) / seg ** 2
         D = (W[:, k + 1] - W[:, k])[None]
         q[m], qd[m], qdd[m] = W[:, k][None] + b * D, db * D, ddb * D
+    return q, qd, qdd
+
+
+def excitation_moves(n_runs, rng, t_run=10.0, harmonics=5):
+    """Finite-Fourier-series excitation trajectories (the standard choice for dynamic
+    identification): every joint sweeps both directions over a wide range of velocities.
+    Smooth 1 s fade-in/out so the arm starts and stops at rest."""
+    steps = int(t_run / DT)
+    t = np.arange(steps) * DT
+    wf = 2 * np.pi / t_run
+    centre = np.deg2rad([0, 15, 15, 0, 0, 0]) + rng.uniform(-0.3, 0.3, (n_runs, 6))
+    amp = np.deg2rad([60, 35, 35, 80, 60, 90])
+    q = np.empty((steps, n_runs, 6))
+    for n in range(n_runs):
+        a = rng.uniform(-1, 1, (harmonics, 6)) / np.arange(1, harmonics + 1)[:, None]
+        b = rng.uniform(-1, 1, (harmonics, 6)) / np.arange(1, harmonics + 1)[:, None]
+        k = np.arange(1, harmonics + 1)[:, None]
+        f = (a[None] * np.sin(k[None] * wf * t[:, None, None]) + b[None] * np.cos(k[None] * wf * t[:, None, None])).sum(1)
+        f = f / (np.abs(f).max(0) + 1e-9)
+        q[:, n] = centre[n] + amp * f
+    fade = np.clip(np.minimum(t, t_run - DT - t) / 1.0, 0, 1)
+    fade = fade * fade * (3 - 2 * fade)                         # smoothstep envelope
+    q = q[:1] + fade[:, None, None] * (q - q[:1])
+    qd = np.gradient(q, DT, axis=0)
+    qdd = np.gradient(qd, DT, axis=0)
     return q, qd, qdd
 
 
@@ -113,15 +138,30 @@ class FleetRun:
     qd_true: np.ndarray | None = None   # ground-truth velocity (simulation only; for tuning/tests)
 
 
-def simulate_fleet(n_runs, faults=None, seed=0, dyn_nominal: ArmDynamics | None = None, units: Units | None = None):
+def simulate_fleet(n_runs, faults=None, seed=0, dyn_nominal: ArmDynamics | None = None, units: Units | None = None,
+                   trajectory="p2p", t_run=T_RUN, kp=None, kd=None, ff=None, ref=None, noise_groups=1, noise_seed=None):
     """faults: list of length n_runs with 'none' or a fault name. Pass `units` to re-run the same
-    physical arms (e.g. a commissioning run) on new trajectories."""
+    physical arms (e.g. a commissioning run) on new trajectories. trajectory="excitation" uses
+    Fourier excitation (for commissioning / identification) over t_run seconds.
+    kp, kd: servo gains, scalar or per joint (6,) (default 400 / 40). ff: extra feed-forward
+    torque (steps, N, 6) added to the command. ref: (q_d, qd_d, qdd_d) to replay a reference.
+    noise_groups=G: the N runs are G copies of N/G arms (e.g. G candidate controllers); sensor
+    noise is drawn once and shared across copies (common random numbers). noise_seed: draw sensor
+    noise from its own stream, so it doesn't depend on how many runs are in the batch."""
     rng = np.random.default_rng(seed)
     nom = dyn_nominal or ArmDynamics()
     plant = ArmDynamics(payload_kg=nom.payload_kg)
     faults = np.array(faults if faults is not None else ["none"] * n_runs)
-    N, steps = n_runs, int(T_RUN / DT)
-    q_d, qd_d, qdd_d = random_moves(N, rng, nom.robot)
+    if trajectory == "excitation":
+        q_d, qd_d, qdd_d = excitation_moves(n_runs, rng, t_run)
+    else:
+        q_d, qd_d, qdd_d = random_moves(n_runs, rng, nom.robot, t_run)
+    if ref is not None:
+        q_d, qd_d, qdd_d = ref
+    kp = KP if kp is None else np.asarray(kp, float)
+    kd = KD if kd is None else np.asarray(kd, float)
+    nrng = rng if noise_seed is None else np.random.default_rng(noise_seed)
+    N, steps = n_runs, q_d.shape[0]
     if units is None:
         units = Units.sample(N, np.random.default_rng(seed + 10_000), plant)
     visc, coul, strib, payload_dm = units.visc, units.coul, units.strib, units.payload_dm
@@ -138,13 +178,16 @@ def simulate_fleet(n_runs, faults=None, seed=0, dyn_nominal: ArmDynamics | None 
     idx = np.arange(N)
     for i in range(steps):
         t = i * DT
-        qm = q + rng.normal(0, 1e-5, q.shape)                     # encoder noise
-        qdm = qd + rng.normal(0, 2e-3, qd.shape)
+        nz = lambda sd: np.tile(nrng.normal(0, sd, (N // noise_groups, 6)), (noise_groups, 1))  # noqa: E731
+        qm = q + nz(1e-5)                                         # encoder noise
+        qdm = qd + nz(2e-3)
         # computed-torque controller on the nominal rigid-body model (no friction model)
-        a_cmd = qdd_d[i] + KD * (qd_d[i] - qdm) + KP * (q_d[i] - qm)
+        a_cmd = qdd_d[i] + kd * (qd_d[i] - qdm) + kp * (q_d[i] - qm)
         M_hat = nom.mass_matrix(qm)
         tau = np.einsum("nij,nj->ni", M_hat, a_cmd) + nom.bias(qm, qdm, friction=False)
-        tau_meas = tau + rng.normal(0, 0.2, tau.shape)             # current-sensor noise (measurement only)
+        if ff is not None:
+            tau = tau + ff[i]
+        tau_meas = tau + nz(0.2)                                  # current-sensor noise (measurement only)
         active = ~np.isnan(onset) & (t >= onset)
         tau_motor = tau.copy()
         sel = active & (faults == "actuator")
@@ -313,32 +356,56 @@ def payload_gravity_basis(run: FleetRun, dyn: ArmDynamics, chunk=200):
 class UnitCalibration:
     """Identify each arm's own deviation from the fleet model from one fault-free commissioning run.
 
-    Per arm and joint, a ridge fit of the remaining residual on a standard identification basis:
-    [viscous q_dot_j, Coulomb tanh(q_dot_j / v_s), payload J^T g, offset]. Through the observer's
-    filter when the residual is an observer residual. Four numbers per joint, frozen afterwards;
-    the Stribeck part of the plant is deliberately not in the basis.
+    Per arm and joint, a fit of the remaining residual on a standard identification basis:
+    [viscous q_dot_j, Coulomb tanh(q_dot_j / v_s), payload J^T g, offset], passed through the
+    observer's filter when the residual is an observer residual. Four numbers per joint, frozen
+    afterwards; the Stribeck part of the plant is deliberately not in the basis.
+
+    robust=True fits with Huber weights (iteratively reweighted least squares), so occasional
+    spikes in the commissioning run can't drag the parameters. clamp=True never extrapolates: in
+    operation each basis feature is clipped to the range the commissioning run covered.
     """
 
-    def __init__(self, dyn: ArmDynamics, filtered=True, ridge=1e-3):
+    def __init__(self, dyn: ArmDynamics, filtered=True, ridge=1e-3, robust=False, clamp=False, irls_iters=8):
         self.dyn, self.filtered, self.ridge = dyn, filtered, ridge
+        self.robust, self.clamp, self.irls_iters = robust, clamp, irls_iters
 
     def basis(self, run: FleetRun):
         g = payload_gravity_basis(run, self.dyn)
         B = np.stack([run.qd, np.tanh(run.qd / 0.02), g, np.ones_like(run.qd)], axis=-1)   # (steps, N, 6, 4)
         return observer_filter(B) if self.filtered else B
 
-    def fit(self, commissioning: FleetRun, residual, warmup=100):
-        B = self.basis(commissioning)[warmup:]
-        r = residual[warmup:]
-        scale = np.sqrt((B ** 2).mean(0)) + 1e-9                                            # (N, 6, 4)
-        Bn = B / scale
-        A = np.einsum("tnjk,tnjl->njkl", Bn, Bn) + self.ridge * len(B) * np.eye(4)
-        b = np.einsum("tnjk,tnj->njk", Bn, r)
-        self.w = np.linalg.solve(A, b[..., None])[..., 0] / scale
+    def _solve(self, Bn, r, wts):
+        A = np.einsum("tnj,tnjk,tnjl->njkl", wts, Bn, Bn) + self.ridge * len(Bn) * np.eye(4)
+        b = np.einsum("tnj,tnjk,tnj->njk", wts, Bn, r)
+        return np.linalg.solve(A, b[..., None])[..., 0]
+
+    def fit(self, commissioning: FleetRun, residual, warmup=100, chunk=100):
+        B_all = self.basis(commissioning)[warmup:]
+        R_all = residual[warmup:]
+        N = B_all.shape[1]
+        self.w = np.empty((N, 6, 4))
+        self.lo, self.hi = B_all.min(0), B_all.max(0)               # commissioning coverage (N, 6, 4)
+        for n0 in range(0, N, chunk):
+            B, r = B_all[:, n0:n0 + chunk], R_all[:, n0:n0 + chunk]
+            scale = np.sqrt((B ** 2).mean(0)) + 1e-9
+            Bn = B / scale
+            wts = np.ones(r.shape)
+            w = self._solve(Bn, r, wts)
+            if self.robust:
+                for _ in range(self.irls_iters):
+                    e = r - np.einsum("tnjk,njk->tnj", Bn, w)
+                    s = 1.4826 * np.median(np.abs(e), axis=0) + 1e-9   # robust scale per arm/joint
+                    wts = np.minimum(1.0, 1.345 * s / (np.abs(e) + 1e-12))
+                    w = self._solve(Bn, r, wts)
+            self.w[n0:n0 + chunk] = w / scale
         return self
 
     def apply(self, run: FleetRun, residual):
-        return residual - np.einsum("tnjk,njk->tnj", self.basis(run), self.w)
+        B = self.basis(run)
+        if self.clamp:
+            B = np.clip(B, self.lo, self.hi)
+        return residual - np.einsum("tnjk,njk->tnj", B, self.w)
 
 
 # --------------------------------------------------------------------------- detection

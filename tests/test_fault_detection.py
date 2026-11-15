@@ -123,3 +123,19 @@ def test_kalman_cuts_velocity_noise_but_keeps_collisions_visible(fleet):
     R, Rt = momentum_observer(k, dyn), momentum_observer(twin, dyn)
     i = int(fleet.onset[1] / DT)                                       # run 1 is the collision
     assert np.abs(R[i:, 1] - Rt[i:, 1]).max() > 2.0
+
+
+def test_clamped_calibration_never_extrapolates(fleet):
+    """With clamp=True the correction applied in operation stays inside what the commissioning
+    run could produce, however far the new motion goes."""
+    from dataclasses import replace
+
+    from ml.fault_detection import UnitCalibration
+    rng = np.random.default_rng(1)
+    resid = rng.normal(size=fleet.qd.shape)
+    cal = UnitCalibration(dyn, clamp=True).fit(fleet, resid)
+    fast = replace(fleet, qd=fleet.qd * 10)                     # 10x faster than anything seen
+    corr = cal.apply(fast, np.zeros_like(resid))
+    B = np.clip(cal.basis(fast), cal.lo, cal.hi)
+    assert np.allclose(corr, -np.einsum("tnjk,njk->tnj", B, cal.w))
+    assert np.all(B >= cal.lo - 1e-12) and np.all(B <= cal.hi + 1e-12)
